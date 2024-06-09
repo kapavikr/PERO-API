@@ -4,8 +4,8 @@ from tkinter import filedialog
 import os
   
 def CreateRow(frame, rowIndex, text, command, var):
-    button = ttk.Button(frame, width=15, text = text, command=command)
-    button.grid(row = rowIndex, column = 0, padx = 10, pady = 10)
+    button = ttk.Button(frame, width=15, text = text, padding=5, command=command)
+    button.grid(row = rowIndex, column = 0, padx = 0, pady = 10)
     if (var != None):
         label = Label(frame, textvariable = var)
         label.grid(row = rowIndex, column = 1, sticky = W, padx = 10, pady = 10)
@@ -59,7 +59,7 @@ label.grid(row = 0, column = 0, columnspan = 2, padx = 10, pady = 10)
 CreateRow(tab1, 1, "PSP folder", OpenPSPFolder, pspFolder)
 CreateRow(tab1, 2, "Working folder", OpenWorkingFolder, workingFolder)  
 
-button = ttk.Button(tab1, width=15, text = "Send to PERO", command=Run)
+button = ttk.Button(tab1, width=15, text = "Send to PERO", padding=5, command=Run)
 button.grid(row = 3, column = 0, columnspan = 2, padx = 10, pady = 10)
 
 # Tab 2 - Přehled přečtených balíčků, výsledky a možnost výměny dat za data z PERO
