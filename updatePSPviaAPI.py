@@ -27,29 +27,31 @@ def OpenWorkingFolder():
   
 def Run():
     print("Send to PERO")
-    
+ 
+# GUI   
 root = Tk()
 root.geometry("800x400")
-
-root.columnconfigure(0, minsize=150)
-root.columnconfigure(1, minsize=550)
-
-NOT_SELECTED = "[Folder not selected]"
-pspFolder = StringVar()
-workingFolder = StringVar()
-pspFolder.set(NOT_SELECTED)  
-workingFolder.set(NOT_SELECTED) 
-
 
 root.title("updatePSPviaAPI") 
 tabControl = ttk.Notebook(root) 
   
 tab1 = ttk.Frame(tabControl) 
 tab2 = ttk.Frame(tabControl)
-  
+
 tabControl.add(tab1, text ='Tab 1') 
 tabControl.add(tab2, text ='Tab 2') 
 tabControl.pack(expand = 1, fill ="both")
+
+# Tab 1 - Výběr PSP balíčku, jeho rozzipování, konfiguace PERO a jeho odeslání k přečtení
+
+tab1.columnconfigure(0, minsize=150)
+tab1.columnconfigure(1, minsize=550)
+
+NOT_SELECTED = "[Folder not selected]"
+pspFolder = StringVar()
+workingFolder = StringVar()
+pspFolder.set(NOT_SELECTED)  
+workingFolder.set(NOT_SELECTED) 
 
 label = ttk.Label(tab1, text = "Select source PSP and working folder, to which unzipped data will be saved.")
 label.grid(row = 0, column = 0, columnspan = 2, padx = 10, pady = 10)
@@ -59,6 +61,8 @@ CreateRow(tab1, 2, "Working folder", OpenWorkingFolder, workingFolder)
 
 button = ttk.Button(tab1, width=15, text = "Send to PERO", command=Run)
 button.grid(row = 3, column = 0, columnspan = 2, padx = 10, pady = 10)
+
+# Tab 2 - Přehled přečtených balíčků, výsledky a možnost výměny dat za data z PERO
 
 label = ttk.Label(tab2, text = "Pending packages.")
 label.grid(row = 0, column = 0, columnspan = 2, padx = 10, pady = 10)
