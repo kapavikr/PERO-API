@@ -4,13 +4,56 @@ from tkinter import filedialog
 import os
 import zipfile
 from PIL import Image
+import requests
   
-def CreateRow(frame, rowIndex, text, command, var):
+def CreateButtonRow(frame, rowIndex, text, command, var):
     button = ttk.Button(frame, width=15, text = text, padding=5, command=command)
     button.grid(row = rowIndex, column = 0, padx = 0, pady = 10)
     if (var != None):
         label = Label(frame, textvariable = var)
         label.grid(row = rowIndex, column = 1, sticky = W, padx = 10, pady = 10)
+        
+def CreateTextBoxRow(frame, rowIndex, text):
+    label = ttk.Label(frame, text = text)
+    label.grid(row = rowIndex, column = 0, padx = 10, pady = 10)
+    textBox = Text(frame, wrap='word', width=50, height=1)
+    textBox.grid(row = rowIndex, column = 1, sticky = W, padx = 10, pady = 10)
+    return textBox
+    
+def CreateRadioButtonRow(frame, rowIndex, value, text, var):
+    radioButton = ttk.Radiobutton(frame, text=text, variable=var, value=value)
+    radioButton.grid(row = rowIndex, column = 1, sticky = W, padx = 10, pady = 10)
+        
+def ShowAvailableEngines(serverUrl, apiKey, var):
+    r = requests.get(f"{serverUrl}/get_engines", headers={"api-key": apiKey})
+    if r.status_code != 200:
+        return 'ERROR: Failed to get available OCR engine list. Code: {r.status_code}'
+    result = r.json()
+    if result['status'] not in ["success", "succes"]:
+        return 'ERROR: Failed to get available OCR engine list. Status: {result["status"]}'
+    #print(result['engines'])
+    engines = result['engines']
+    #for engine in engines:
+    #    print(engines[engine]['id'], engine, engines[engine]['description'])
+    buttonLoadEngines.destroy()
+    row = 5
+    #f1 = ttk.Frame(tab1)
+    #f1.grid(row = row, column = 1, columnspan = 2, sticky = W)
+    for idx, value in enumerate(engines):
+        #if (idx == 2 or idx == 4):
+        #    f1 = ttk.Frame(tab1)
+        #    row+=1
+        #    f1.grid(row = row, column = 1, columnspan = 2, sticky = W)
+        #radioButton = ttk.Radiobutton(f1, text=value, variable=engine, value=engines[value]['id'])
+        #radioButton.pack(side="left")
+        row+=idx
+        CreateRadioButtonRow(tab1, row, engines[value]['id'], value, engine)
+        if (idx == 0):
+            engine.set(engines[value]['id'])
+    row+=1
+    button = ttk.Button(tab1, width=15, text = "Send to PERO", padding=5, command=Run)
+    button.grid(row = row, column = 0, columnspan = 2, padx = 10, pady = 10)
+    
         
 def OpenPSPFile():
     global lastDir
@@ -73,7 +116,7 @@ def CreateFilelist(directoryPath, filePath):
  
 # GUI   
 root = Tk()
-root.geometry("800x400")
+root.geometry("800x600")
 
 root.title("updatePSPviaAPI") 
 tabControl = ttk.Notebook(root) 
@@ -93,17 +136,24 @@ tab1.columnconfigure(1, minsize=550)
 NOT_SELECTED = "[Folder not selected]"
 pspFile = StringVar()
 workingFolder = StringVar()
-pspFile.set(NOT_SELECTED)  
-workingFolder.set(NOT_SELECTED) 
+engine = StringVar()
+pspFile.set(NOT_SELECTED)
+workingFolder.set(NOT_SELECTED)
 
 label = ttk.Label(tab1, text = "Select source PSP and working folder, to which unzipped data will be saved.")
 label.grid(row = 0, column = 0, columnspan = 2, padx = 10, pady = 10)
 
-CreateRow(tab1, 1, "PSP folder", OpenPSPFile, pspFile)
-CreateRow(tab1, 2, "Working folder", OpenWorkingFolder, workingFolder)  
+CreateButtonRow(tab1, 1, "PSP folder", OpenPSPFile, pspFile)
+CreateButtonRow(tab1, 2, "Working folder", OpenWorkingFolder, workingFolder)
+serverUrl = CreateTextBoxRow(tab1, 3, "Server URL:")
+serverUrl.insert(END, "https://pero-ocr.fit.vutbr.cz/api")
+apiKey = CreateTextBoxRow(tab1, 4, "API key:")
+apiKey.insert(END, "Nl6AxLWWvf0JxRSievnM2WLnGyCgrGWbsInx1ZPTctE")
 
-button = ttk.Button(tab1, width=15, text = "Send to PERO", padding=5, command=Run)
-button.grid(row = 3, column = 0, columnspan = 2, padx = 10, pady = 10)
+label = ttk.Label(tab1, text = "Engine:")
+label.grid(row = 5, column = 0, padx = 10, pady = 10)
+buttonLoadEngines = ttk.Button(tab1, width=15, text = "Load engines", padding=5, command=lambda: ShowAvailableEngines(serverUrl.get("1.0",END).strip(), apiKey.get("1.0",END).strip(), engine))
+buttonLoadEngines.grid(row = 5, column = 1, padx = 10, pady = 10)
 
 # Tab 2 - Přehled přečtených balíčků, výsledky a možnost výměny dat za data z PERO
 
