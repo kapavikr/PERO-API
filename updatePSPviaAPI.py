@@ -31,44 +31,51 @@ def ShowAvailableEngines(serverUrl, apiKey, var):
     result = r.json()
     if result['status'] not in ["success", "succes"]:
         return 'ERROR: Failed to get available OCR engine list. Status: {result["status"]}'
-    #print(result['engines'])
     engines = result['engines']
-    #for engine in engines:
-    #    print(engines[engine]['id'], engine, engines[engine]['description'])
     buttonLoadEngines.destroy()
-    row = 5
-    #f1 = ttk.Frame(tab1)
-    #f1.grid(row = row, column = 1, columnspan = 2, sticky = W)
+    row = 3
     for idx, value in enumerate(engines):
-        #if (idx == 2 or idx == 4):
-        #    f1 = ttk.Frame(tab1)
-        #    row+=1
-        #    f1.grid(row = row, column = 1, columnspan = 2, sticky = W)
-        #radioButton = ttk.Radiobutton(f1, text=value, variable=engine, value=engines[value]['id'])
-        #radioButton.pack(side="left")
         row+=idx
         CreateRadioButtonRow(tab1, row, engines[value]['id'], value, engine)
         if (idx == 0):
             engine.set(engines[value]['id'])
     row+=1
-    button = ttk.Button(tab1, width=15, text = "Send to PERO", padding=5, command=Run)
-    button.grid(row = row, column = 0, columnspan = 2, padx = 10, pady = 10)
+    CreateSelectFoldersControls(row)
+    
+def CreateSelectFoldersControls(row):
+    label = ttk.Label(tab1, text = "Select source PSP and working folder, to which unzipped data will be saved:")
+    label.grid(row = row, column = 0, columnspan = 2, sticky = W, padx = 10, pady = 10)
+
+    CreateButtonRow(tab1, row+1, "PSP folder", OpenPSPFile, pspFile)
+    CreateButtonRow(tab1, row+2, "Working folder", OpenWorkingFolder, workingFolder)
+    global sendButton
+    sendButton = ttk.Button(tab1, width=15, text = "Send to PERO", padding=5, command=Run)
+    sendButton.grid(row = row+3, column = 0, columnspan = 2, padx = 10, pady = 10)
+    sendButton["state"] = "disable"
     
         
 def OpenPSPFile():
     global lastDir
+    global sendButton
     path = filedialog.askopenfilename(
         title="Select PSP file",
         filetypes=[("ZIP files", "*.zip")])
     pspFile.set(path)
+    print(path)
     lastDir = os.path.dirname(path)
     workingFolder.set(lastDir)
+    if (path != ""):
+        sendButton["state"] = "normal"
+    else:
+        sendButton["state"] = "disabled"
 
 def OpenWorkingFolder():
     global lastDir
     path = filedialog.askdirectory(initialdir=lastDir, title="Choose working folder")
     workingFolder.set(path)
     lastDir = os.path.dirname(path)
+    if (path == ""):
+        sendButton["state"] = "disabled"
   
 def Run():
     workingPath = workingFolder.get()
@@ -140,20 +147,18 @@ engine = StringVar()
 pspFile.set(NOT_SELECTED)
 workingFolder.set(NOT_SELECTED)
 
-label = ttk.Label(tab1, text = "Select source PSP and working folder, to which unzipped data will be saved.")
-label.grid(row = 0, column = 0, columnspan = 2, padx = 10, pady = 10)
-
-CreateButtonRow(tab1, 1, "PSP folder", OpenPSPFile, pspFile)
-CreateButtonRow(tab1, 2, "Working folder", OpenWorkingFolder, workingFolder)
-serverUrl = CreateTextBoxRow(tab1, 3, "Server URL:")
+serverUrl = CreateTextBoxRow(tab1, 1, "Server URL:")
 serverUrl.insert(END, "https://pero-ocr.fit.vutbr.cz/api")
-apiKey = CreateTextBoxRow(tab1, 4, "API key:")
+apiKey = CreateTextBoxRow(tab1, 2, "API key:")
 apiKey.insert(END, "Nl6AxLWWvf0JxRSievnM2WLnGyCgrGWbsInx1ZPTctE")
 
 label = ttk.Label(tab1, text = "Engine:")
-label.grid(row = 5, column = 0, padx = 10, pady = 10)
+label.grid(row = 3, column = 0, padx = 10, pady = 10)
 buttonLoadEngines = ttk.Button(tab1, width=15, text = "Load engines", padding=5, command=lambda: ShowAvailableEngines(serverUrl.get("1.0",END).strip(), apiKey.get("1.0",END).strip(), engine))
-buttonLoadEngines.grid(row = 5, column = 1, padx = 10, pady = 10)
+buttonLoadEngines.grid(row = 3, column = 1, padx = 10, pady = 10)
+
+if (serverUrl.get("1.0",END).strip() != "" and apiKey.get("1.0",END).strip() != ""):
+    ShowAvailableEngines(serverUrl.get("1.0",END).strip(), apiKey.get("1.0",END).strip(), engine)
 
 # Tab 2 - Přehled přečtených balíčků, výsledky a možnost výměny dat za data z PERO
 
