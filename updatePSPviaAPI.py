@@ -5,6 +5,7 @@ import os
 import zipfile
 from PIL import Image
 import requests
+import json
   
 def CreateButtonRow(frame, rowIndex, text, command, var):
     button = ttk.Button(frame, width=15, text = text, padding=5, command=command)
@@ -25,6 +26,7 @@ def CreateRadioButtonRow(frame, rowIndex, value, text, var):
     radioButton.grid(row = rowIndex, column = 1, sticky = W, padx = 10, pady = 10)
         
 def ShowAvailableEngines(serverUrl, apiKey, var):
+    SaveSettings(serverUrl, apiKey)
     r = requests.get(f"{serverUrl}/get_engines", headers={"api-key": apiKey})
     if r.status_code != 200:
         return 'ERROR: Failed to get available OCR engine list. Code: {r.status_code}'
@@ -57,7 +59,9 @@ def CreateSelectFoldersControls(row):
 def OpenPSPFile():
     global lastDir
     global sendButton
+    lastDir = LoadLastDirFromSettings()
     path = filedialog.askopenfilename(
+        initialdir = lastDir,
         title="Select PSP file",
         filetypes=[("ZIP files", "*.zip")])
     pspFile.set(path)
@@ -76,12 +80,63 @@ def OpenWorkingFolder():
     lastDir = os.path.dirname(path)
     if (path == ""):
         sendButton["state"] = "disabled"
+        
+def SaveSettings(newServerUrl = None, newApiKey = None, newEngine = None, newLastDir = None):
+    try:
+      with open("settings.json", 'r') as file:
+              data = json.load(file)
+              serverUrl = data.get("serverUrl", "")
+              apiKey = data.get("apiKey", "")
+              engine = data.get("engine", "")
+              lastDir = data.get("lastDir", "")
+    except:
+        print("Settings not loaded")
+        serverUrl = ""
+        apiKey = ""
+        engine = ""
+        lastDir = ""
+    
+    if newServerUrl != None:
+        serverUrl = newServerUrl
+    if newApiKey != None:
+        apiKey = newApiKey
+    if newEngine != None:
+        engine = newEngine
+    if newLastDir != None:
+        lastDir = newLastDir
+    
+    with open("settings.json", 'w') as file:
+        json.dump({"serverUrl": serverUrl, "apiKey": apiKey, "engine": engine, "lastDir": lastDir}, file)
+
+def LoadTextboxesFromSettings():
+    try:
+        with open("settings.json", 'r') as file:
+            data = json.load(file)
+            serverUrl = data.get("serverUrl", "")
+            apiKey = data.get("apiKey", "")
+            serverUrlTB.insert(END, serverUrl)
+            apiKeyTB.insert(END, apiKey)
+    except:
+        print("Settings not loaded")
+
+def LoadLastDirFromSettings():
+    try:
+        with open("settings.json", 'r') as file:
+            data = json.load(file)
+            return data.get("lastDir", "")
+    except:
+        print("Settings not loaded")
+        return ""
   
 def Run():
     workingPath = workingFolder.get()
+    pspPath = pspFile.get()
+    
+    SaveSettings(None, None, engine.get(), workingPath)
+    return
     
     # 1) Unzip the folder with PSP data
-    unzippedName = Unzip(pspFile.get(), workingPath)
+    unzippedName = Unzip(pspPath, workingPath)
     
     # 2) Convert jp2s to jpgs with max quality (95); TODO: when the result is > 8 MB, we should lower the quality to get under 8 MB 
     masterCopyPath = os.path.join(workingPath, unzippedName[0], "mastercopy")
@@ -147,18 +202,20 @@ engine = StringVar()
 pspFile.set(NOT_SELECTED)
 workingFolder.set(NOT_SELECTED)
 
-serverUrl = CreateTextBoxRow(tab1, 1, "Server URL:")
-serverUrl.insert(END, "https://pero-ocr.fit.vutbr.cz/api")
-apiKey = CreateTextBoxRow(tab1, 2, "API key:")
-apiKey.insert(END, "Nl6AxLWWvf0JxRSievnM2WLnGyCgrGWbsInx1ZPTctE")
+serverUrlTB = CreateTextBoxRow(tab1, 1, "Server URL:")
+#serverUrlTB.insert(END, "https://pero-ocr.fit.vutbr.cz/api")
+apiKeyTB = CreateTextBoxRow(tab1, 2, "API key:")
+#apiKeyTB.insert(END, "Nl6AxLWWvf0JxRSievnM2WLnGyCgrGWbsInx1ZPTctE")
 
 label = ttk.Label(tab1, text = "Engine:")
 label.grid(row = 3, column = 0, padx = 10, pady = 10)
-buttonLoadEngines = ttk.Button(tab1, width=15, text = "Load engines", padding=5, command=lambda: ShowAvailableEngines(serverUrl.get("1.0",END).strip(), apiKey.get("1.0",END).strip(), engine))
+buttonLoadEngines = ttk.Button(tab1, width=15, text = "Load engines", padding=5, command=lambda: ShowAvailableEngines(serverUrlTB.get("1.0",END).strip(), apiKeyTB.get("1.0",END).strip(), engine))
 buttonLoadEngines.grid(row = 3, column = 1, padx = 10, pady = 10)
 
-if (serverUrl.get("1.0",END).strip() != "" and apiKey.get("1.0",END).strip() != ""):
-    ShowAvailableEngines(serverUrl.get("1.0",END).strip(), apiKey.get("1.0",END).strip(), engine)
+LoadTextboxesFromSettings()
+
+if (serverUrlTB.get("1.0",END).strip() != "" and apiKeyTB.get("1.0",END).strip() != ""):
+    ShowAvailableEngines(serverUrlTB.get("1.0",END).strip(), apiKeyTB.get("1.0",END).strip(), engine)
 
 # Tab 2 - Přehled přečtených balíčků, výsledky a možnost výměny dat za data z PERO
 
