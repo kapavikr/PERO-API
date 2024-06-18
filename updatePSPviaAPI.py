@@ -6,6 +6,10 @@ import zipfile
 from PIL import Image
 import requests
 import json
+import csv
+from datetime import datetime
+from post_ocr_request import SendToAPI
+from retrieve_ocr_results import Retrieve
   
 def CreateButtonRow(frame, rowIndex, text, command, var):
     button = ttk.Button(frame, width=15, text = text, padding=5, command=command)
@@ -107,6 +111,12 @@ def SaveSettings(newServerUrl = None, newApiKey = None, newEngine = None, newLas
     
     with open("settings.json", 'w') as file:
         json.dump({"serverUrl": serverUrl, "apiKey": apiKey, "engine": engine, "lastDir": lastDir}, file)
+        
+def SaveRequest(pspPath, workingPath, requestId, date):
+    new_row = [pspPath, workingPath, requestId, date, "N/A"]
+    with open('requests.csv', 'a', newline='') as csvfile:
+        csvwriter = csv.writer(csvfile)
+        csvwriter.writerow(new_row)
 
 def LoadTextboxesFromSettings():
     try:
@@ -131,20 +141,26 @@ def LoadLastDirFromSettings():
 def Run():
     workingPath = workingFolder.get()
     pspPath = pspFile.get()
+    engineId = engine.get()
     
-    SaveSettings(None, None, engine.get(), workingPath)
-    return
+    SaveSettings(None, None, engineId, workingPath)
+    #return
     
     # 1) Unzip the folder with PSP data
-    unzippedName = Unzip(pspPath, workingPath)
+    #unzippedName = Unzip(pspPath, workingPath)
     
     # 2) Convert jp2s to jpgs with max quality (95); TODO: when the result is > 8 MB, we should lower the quality to get under 8 MB 
-    masterCopyPath = os.path.join(workingPath, unzippedName[0], "mastercopy")
+    #masterCopyPath = os.path.join(workingPath, unzippedName[0], "mastercopy")
     imagesPath = os.path.join(workingPath, "jpg")
-    ConvertJP2toJPG(masterCopyPath, imagesPath)
+    #ConvertJP2toJPG(masterCopyPath, imagesPath)
  
     # 3) Create file contaning all filenames
-    CreateFilelist(imagesPath, os.path.join(imagesPath, "list.txt"))
+    #CreateFilelist(imagesPath, os.path.join(imagesPath, "list.txt"))
+
+    # 4) Poslat na API
+    urlList = os.path.join(imagesPath, "list.txt")
+    requestId = SendToAPI(serverUrlTB.get("1.0",END).strip(), apiKeyTB.get("1.0",END).strip(), engineId, imagesPath, urlList)
+    SaveRequest(pspPath, workingPath, requestId, datetime.now())
  
 def Unzip(zip, to):
     print("to:" + to)
@@ -178,7 +194,7 @@ def CreateFilelist(directoryPath, filePath):
  
 # GUI   
 root = Tk()
-root.geometry("800x600")
+root.geometry("1000x600")
 
 root.title("updatePSPviaAPI") 
 tabControl = ttk.Notebook(root) 
@@ -218,14 +234,78 @@ if (serverUrlTB.get("1.0",END).strip() != "" and apiKeyTB.get("1.0",END).strip()
     ShowAvailableEngines(serverUrlTB.get("1.0",END).strip(), apiKeyTB.get("1.0",END).strip(), engine)
 
 # Tab 2 - Přehled přečtených balíčků, výsledky a možnost výměny dat za data z PERO
+def UpdateRequestStatus(requestId, status):
+     # Read the CSV file into memory
+    rows = []
+    with open("requests.csv", 'r', newline='') as file:
+        reader = csv.reader(file)
+        #headers = next(reader)  # Save the headers
+        for row in reader:
+            if row[2] == requestId:  # Check the value of the third column
+                row[4] = status  # Update the value of the fourth column
+            rows.append(row)
 
-label = ttk.Label(tab2, text = "Pending packages.")
-label.grid(row = 0, column = 0, columnspan = 2, padx = 10, pady = 10)
+    # Write the updated rows back to the CSV file
+    with open("requests.csv", 'w', newline='') as file:
+        writer = csv.writer(file)
+        #writer.writerow(headers)  # Write the headers
+        writer.writerows(rows)  # Write the updated rows
 
-label = ttk.Label(tab2, text = "Package 1 with quite a long title")
-label.grid(row = 1, column = 0, padx = 10, pady = 10)
+def load_csv_to_treeview(tree, csv_file):
+    # Clear the existing contents of the treeview
+    for row in tree.get_children():
+        tree.delete(row)
+    
+    # Open the CSV file
+    with open(csv_file, newline='') as file:
+        reader = csv.reader(file)
+        # Get the CSV headers
+        headers = ["PSP","working","ID","datum","result"]
+        
+        # Configure the treeview columns
+        tree["columns"] = headers
+        for header in headers:
+            tree.heading(header, text=header)
+            tree.column(header, anchor=W)
+        
+        # Insert CSV rows into the treeview
+        for row in reader:
+            tree.insert("", END, values=row)
 
-label = ttk.Label(tab2, text = "Button")
-label.grid(row = 1, column = 1, padx = 10, pady = 10)
+def show_context_menu(event):
+    selected_item = tree.identify_row(event.y)
+    if selected_item:
+        tree.selection_set(selected_item)
+        context_menu.post(event.x_root, event.y_root)
+
+def on_context_menu_click(action):
+    selected_item = tree.selection()[0]
+    item_values = tree.item(selected_item, 'values')
+    #print(f"Context menu '{action}' clicked for {item_values}")
+    result = Retrieve(serverUrlTB.get("1.0",END).strip(), apiKeyTB.get("1.0",END).strip(), item_values[2], os.path.join(item_values[1], "result"))
+    if result == 0:
+        UpdateRequestStatus(item_values[2], 100)
+        Reload()
+        
+def Reload():
+    load_csv_to_treeview(tree, 'requests.csv')
+
+#buttonReload = ttk.Button(tab2, width=15, text = "Reload", padding=5, command=Reload)
+#buttonReload.pack()
+
+tree = ttk.Treeview(tab2, show='headings')
+tree.pack(fill=BOTH, expand=True)
+
+Reload()
+
+# Create the context menu
+global context_menu
+context_menu = Menu(root, tearoff=0)
+context_menu.add_command(label="Retrieve result", command=lambda: on_context_menu_click("Edit"))
+context_menu.add_separator()
+context_menu.add_command(label="Delete", command=lambda: on_context_menu_click("Delete"))
+
+# Bind right-click event to the treeview
+tree.bind("<Button-3>", show_context_menu)
   
 root.mainloop()   
