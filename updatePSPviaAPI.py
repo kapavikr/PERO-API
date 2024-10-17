@@ -4,308 +4,982 @@ from tkinter import filedialog
 import os
 import zipfile
 from PIL import Image
-import requests
 import json
-import csv
+import requests
 from datetime import datetime
-from post_ocr_request import SendToAPI
-from retrieve_ocr_results import Retrieve
-  
-def CreateButtonRow(frame, rowIndex, text, command, var):
-    button = ttk.Button(frame, width=15, text = text, padding=5, command=command)
-    button.grid(row = rowIndex, column = 0, padx = 0, pady = 10)
-    if (var != None):
-        label = Label(frame, textvariable = var)
-        label.grid(row = rowIndex, column = 1, sticky = W, padx = 10, pady = 10)
-        
-def CreateTextBoxRow(frame, rowIndex, text):
-    label = ttk.Label(frame, text = text)
-    label.grid(row = rowIndex, column = 0, padx = 10, pady = 10)
-    textBox = Text(frame, wrap='word', width=50, height=1)
-    textBox.grid(row = rowIndex, column = 1, sticky = W, padx = 10, pady = 10)
-    return textBox
-    
-def CreateRadioButtonRow(frame, rowIndex, value, text, var):
-    radioButton = ttk.Radiobutton(frame, text=text, variable=var, value=value)
-    radioButton.grid(row = rowIndex, column = 1, sticky = W, padx = 10, pady = 10)
-        
-def ShowAvailableEngines(serverUrl, apiKey, var):
-    SaveSettings(serverUrl, apiKey)
-    r = requests.get(f"{serverUrl}/get_engines", headers={"api-key": apiKey})
+import csv
+from collections import defaultdict
+import subprocess
+import platform
+from tkinter import messagebox
+from PIL import ImageTk as itk
+import shutil
+import hashlib
+import xml.etree.ElementTree as ET
+
+SETTINGS_FILE = "settings.json"
+JPG_FOLDER = "jpg"
+RESULT_FOLDER = "result"
+DATA_FILE = "data.csv"
+QUALITY_FILE = "quality.csv"
+WINDOW_WIDTH = 1000
+
+###############################################################################
+# Upravené kopie funkcí z post_ocr_request.py
+###############################################################################
+def LoadEnginesFromAPI(server_url, api_key):
+    r = requests.get(f"{server_url}/get_engines", headers={"api-key": api_key})
     if r.status_code != 200:
-        return 'ERROR: Failed to get available OCR engine list. Code: {r.status_code}'
+        ShowError(f'ERROR: Failed to get available OCR engine list. Code: {r.status_code}')
+        print(f'ERROR: Failed to get available OCR engine list. Code: {r.status_code}')
+        return None
     result = r.json()
     if result['status'] not in ["success", "succes"]:
-        return 'ERROR: Failed to get available OCR engine list. Status: {result["status"]}'
-    engines = result['engines']
-    buttonLoadEngines.destroy()
-    row = 3
-    for idx, value in enumerate(engines):
-        row+=idx
-        CreateRadioButtonRow(tab1, row, engines[value]['id'], value, engine)
-        if (idx == 0):
-            engine.set(engines[value]['id'])
-    row+=1
-    CreateSelectFoldersControls(row)
-    
-def CreateSelectFoldersControls(row):
-    label = ttk.Label(tab1, text = "Select source PSP and working folder, to which unzipped data will be saved:")
-    label.grid(row = row, column = 0, columnspan = 2, sticky = W, padx = 10, pady = 10)
+        ShowError(f'ERROR: Failed to get available OCR engine list. Status: {result["status"]}')
+        print(f'ERROR: Failed to get available OCR engine list. Status: {result["status"]}')
+        return None
 
-    CreateButtonRow(tab1, row+1, "PSP folder", OpenPSPFile, pspFile)
-    CreateButtonRow(tab1, row+2, "Working folder", OpenWorkingFolder, workingFolder)
-    global sendButton
-    sendButton = ttk.Button(tab1, width=15, text = "Send to PERO", padding=5, command=Run)
-    sendButton.grid(row = row+3, column = 0, columnspan = 2, padx = 10, pady = 10)
-    sendButton["state"] = "disable"
-    
-        
-def OpenPSPFile():
-    global lastDir
-    global sendButton
-    lastDir = LoadLastDirFromSettings()
-    path = filedialog.askopenfilename(
-        initialdir = lastDir,
-        title="Select PSP file",
-        filetypes=[("ZIP files", "*.zip")])
-    pspFile.set(path)
-    print(path)
-    lastDir = os.path.dirname(path)
-    workingFolder.set(lastDir)
-    if (path != ""):
-        sendButton["state"] = "normal"
+    return result['engines']
+
+def CreateRequest(engine_id, url_file):
+    request_dict = {"engine": engine_id, "images": {}}
+    with open(url_file, 'r') as f:
+        for i, line in enumerate(f):
+            words = line.split()
+            img_name = words[0]
+            if len(words) != 1:
+                progress.set('ERROR: Multiple words per file line {i}:', *words)
+                print('ERROR: Multiple words per file line {i}:', *words)
+
+            request_dict['images'][img_name] = None
+
+    return request_dict
+
+def PostRequest(server_url, api_key, request_dict):
+    r = requests.post(f"{server_url}/post_processing_request",
+                      json=request_dict,
+                      headers={"api-key": api_key, "Content-Type": "application/json"})
+
+    if r.status_code == 404:
+        ShowError(f'ERROR: Requested engine was not found on server.')
+        print(f'ERROR: Requested engine was not found on server.')
+        return None
+    elif r.status_code == 422:
+        ShowError(f'ERROR: Request JSON has wrong format.')
+        print(f'ERROR: Request JSON has wrong format.')
+        return None
+    elif r.status_code != 200:
+        ShowError(f'ERROR: Request returned with unexpected status code: {r.status_code}')
+        print(f'ERROR: Request returned with unexpected status code: {r.status_code}')
+        return None
+
     else:
-        sendButton["state"] = "disabled"
+        response = r.json()
+        if response['status'] != "success":
+            ShowError(f'ERROR: Request status is wrong: {response["status"]}')
+            print(f'ERROR: Request status is wrong: {response["status"]}')
+            print(response)
 
-def OpenWorkingFolder():
-    global lastDir
-    path = filedialog.askdirectory(initialdir=lastDir, title="Choose working folder")
-    workingFolder.set(path)
-    lastDir = os.path.dirname(path)
-    if (path == ""):
-        sendButton["state"] = "disabled"
-        
-def SaveSettings(newServerUrl = None, newApiKey = None, newEngine = None, newLastDir = None):
-    try:
-      with open("settings.json", 'r') as file:
-              data = json.load(file)
-              serverUrl = data.get("serverUrl", "")
-              apiKey = data.get("apiKey", "")
-              engine = data.get("engine", "")
-              lastDir = data.get("lastDir", "")
-    except:
-        print("Settings not loaded")
-        serverUrl = ""
-        apiKey = ""
-        engine = ""
-        lastDir = ""
-    
-    if newServerUrl != None:
-        serverUrl = newServerUrl
-    if newApiKey != None:
-        apiKey = newApiKey
-    if newEngine != None:
-        engine = newEngine
-    if newLastDir != None:
-        lastDir = newLastDir
-    
-    with open("settings.json", 'w') as file:
-        json.dump({"serverUrl": serverUrl, "apiKey": apiKey, "engine": engine, "lastDir": lastDir}, file)
-        
-def SaveRequest(pspPath, workingPath, requestId, date):
-    new_row = [pspPath, workingPath, requestId, date, "N/A"]
-    with open('requests.csv', 'a', newline='') as csvfile:
-        csvwriter = csv.writer(csvfile)
-        csvwriter.writerow(new_row)
+        return response['request_id']
 
-def LoadTextboxesFromSettings():
-    try:
-        with open("settings.json", 'r') as file:
-            data = json.load(file)
-            serverUrl = data.get("serverUrl", "")
-            apiKey = data.get("apiKey", "")
-            serverUrlTB.insert(END, serverUrl)
-            apiKeyTB.insert(END, apiKey)
-    except:
-        print("Settings not loaded")
-
-def LoadLastDirFromSettings():
-    try:
-        with open("settings.json", 'r') as file:
-            data = json.load(file)
-            return data.get("lastDir", "")
-    except:
-        print("Settings not loaded")
-        return ""
-  
-def Run():
-    workingPath = workingFolder.get()
-    pspPath = pspFile.get()
-    engineId = engine.get()
+def UploadImages(server_url, api_key, request_dict, request_id, image_path):
+    session = requests.Session()
+    headers = {"api-key": api_key}
+    total = len(request_dict['images'])
+    uploaded = 0
     
-    SaveSettings(None, None, engineId, workingPath)
-    #return
-    
-    # 1) Unzip the folder with PSP data
-    #unzippedName = Unzip(pspPath, workingPath)
-    
-    # 2) Convert jp2s to jpgs with max quality (95); TODO: when the result is > 8 MB, we should lower the quality to get under 8 MB 
-    #masterCopyPath = os.path.join(workingPath, unzippedName[0], "mastercopy")
-    imagesPath = os.path.join(workingPath, "jpg")
-    #ConvertJP2toJPG(masterCopyPath, imagesPath)
- 
-    # 3) Create file contaning all filenames
-    #CreateFilelist(imagesPath, os.path.join(imagesPath, "list.txt"))
+    for idx, image_name in enumerate(request_dict['images']):
+        file_path = os.path.join(image_path, image_name)
+        if not os.path.exists(file_path):
+            ShowError(f'ERROR: Missing file {file_path}')
+            print(f'ERROR: Missing file {file_path}')
+            continue
 
-    # 4) Poslat na API
-    urlList = os.path.join(imagesPath, "list.txt")
-    requestId = SendToAPI(serverUrlTB.get("1.0",END).strip(), apiKeyTB.get("1.0",END).strip(), engineId, imagesPath, urlList)
-    SaveRequest(pspPath, workingPath, requestId, datetime.now())
- 
-def Unzip(zip, to):
-    print("to:" + to)
-    if not os.path.exists(to):
-        os.makedirs(to)
-    with zipfile.ZipFile(zip, 'r') as zip_ref:
-        zip_ref.extractall(to)
-    return zip_ref.namelist()
+        url = f'{server_url}/upload_image/{request_id}/{image_name}'
+        UpdateProgress('Uploading image ' + str(idx+1) + '/' + str(total) + "...")
 
-def ConvertJP2toJPG(input, output, quality=95):
-    if not os.path.exists(output):
-        os.makedirs(output)
-        
-    for filename in os.listdir(input):
-        if filename.lower().endswith('.jp2'):
-            jp2Path = os.path.join(input, filename)
-            img = Image.open(jp2Path)
-            jpgFilename = os.path.splitext(filename)[0] + '.jpg'
-            jpgPath = os.path.join(output, jpgFilename)
-            img.convert('RGB').save(jpgPath, 'JPEG', quality=quality)
-            
-def CreateFilelist(directoryPath, filePath):
-    if os.path.exists(filePath):
-        os.remove(filePath)
-        
-    files = os.listdir(directoryPath)
-    with open(filePath, 'w') as file:
-        for filename in files:
-            file.write(filename + '\n')
- 
- 
-# GUI   
+        with open(file_path, 'rb') as f:
+            r = session.post(url, files={'file': f}, headers=headers)
+        print(r.text)
+        if r.status_code == 200:
+            uploaded = uploaded + 1
+            continue
+        if r.status_code == 202:
+            ShowError(f'ERROR: Page in wrong state.')
+            print(f'ERROR: Page in wrong state.')
+            continue
+        if r.status_code == 400:
+            ShowError(f'ERROR: Request with id {request_id} does not exist.')
+            print(f'ERROR: Request with id {request_id} does not exist.')
+            continue
+        if r.status_code == 401:
+            ShowError(f'ERROR: Request with id {request_id} does not belong to this API key.')
+            print(f'ERROR: Request with id {request_id} does not belong to this API key.')
+            continue
+        if r.status_code == 404:
+            ShowError(f'ERROR: Page with name {image_name} does not exist in request {request_id}.')
+            print(f'ERROR: Page with name {image_name} does not exist in request {request_id}.')
+            continue
+        if r.status_code == 422:
+            ShowError(f'ERROR: Unsupported image file extension {image_name}.')
+            print(f'ERROR: Unsupported image file extension {image_name}.')
+            continue
+        if r.status_code != 200:
+            ShowError(f'ERROR: Request returned with unexpected status code: {r.status_code}')
+            print(f'ERROR: Request returned with unexpected status code: {r.status_code}')
+            print(r.text)
+            continue
+
+    return uploaded
+
+###############################################################################
+# Upravené kopie funkcí z retrieve_ocr_results.py
+###############################################################################
+def get_request_status(server_url, api_key, request_id):
+    url = f"{server_url}/request_status/{request_id}"
+    r = requests.get(url, headers={"api-key": api_key})
+
+    if r.status_code == 401:
+        ShowError(f'ERROR: Request with id {request_id} does not belong to this API key.')
+        print(f'ERROR: Request with id {request_id} does not belong to this API key.')
+    if r.status_code == 404:
+        ShowError(f'ERROR: Request with id {request_id} does not exist.')
+        print(f'ERROR: Request with id {request_id} does not exist.')
+    if r.status_code != 200:
+        ShowError(f'ERROR: Request returned with unexpected status code: {r.status_code}')
+        print(f'ERROR: Request returned with unexpected status code: {r.status_code}')
+        print(r.text)
+
+    response = r.json()
+
+    if response['status'] != "success":
+        ShowError(f'ERROR: Unexpected request query status: {response["status"]}')
+        print(f'ERROR: Unexpected request query status: {response["status"]}')
+        print(response)
+
+    return response['request_status']
+
+def download_results(page_name, session, server_url, api_key, request_id, output_path, alto, page, txt):
+    path = os.path.join(output_path, page_name)
+    requested_formats = []
+    if alto:
+        requested_formats.append('alto')
+    if page:
+        requested_formats.append('page')
+    if txt:
+        requested_formats.append('txt')
+
+    for file_format in requested_formats:
+        file_path = f'{path}.{file_format}'
+        if os.path.exists(file_path):
+            continue
+
+        url = f"{server_url}/download_results/{request_id}/{page_name}/{file_format}"
+        r = session.get(url, headers={"api-key": api_key})
+        if r.status_code == 400:
+            ShowError(f'ERROR: Unknown export format: {file_format}')
+            print(f'ERROR: Unknown export format: {file_format}')
+            continue
+        if r.status_code == 401:
+            ShowError(f'ERROR: Request with id {request_id} does not belong to this API key.')
+            print(f'ERROR: Request with id {request_id} does not belong to this API key.')
+            continue
+        if r.status_code == 404:
+            ShowError(f'ERROR: Request with id {request_id} does not exist.')
+            print(f'ERROR: Request with id {request_id} does not exist.')
+            continue
+        if r.status_code != 200:
+            ShowError(f'ERROR: Request returned with unexpected status code: {r.status_code}')
+            print(f'ERROR: Request returned with unexpected status code: {r.status_code}')
+            print(r.text)
+            continue
+
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(r.text)
+
+
+###############################################################################
+# GUI
+###############################################################################
 root = Tk()
-root.geometry("1000x600")
+root.geometry(str(WINDOW_WIDTH) + "x600")
+
+root.grid_columnconfigure(0, minsize=400)
+root.grid_columnconfigure(1, minsize=400)
 
 root.title("updatePSPviaAPI") 
 tabControl = ttk.Notebook(root) 
   
 tab1 = ttk.Frame(tabControl) 
 tab2 = ttk.Frame(tabControl)
-
-tabControl.add(tab1, text ='Tab 1') 
-tabControl.add(tab2, text ='Tab 2') 
+tab3 = ttk.Frame(tabControl)
+  
+tabControl.add(tab1, text ='Zadání') 
+tabControl.add(tab2, text ='Výsledky')
+tabControl.add(tab3, text ='Manuální nahrazení') 
 tabControl.pack(expand = 1, fill ="both")
 
-# Tab 1 - Výběr PSP balíčku, jeho rozzipování, konfigurace PERO a jeho odeslání k přečtení
+###############################################################################
+# tab 1 - Zadání
+###############################################################################
+def ShowError(text):
+    UpdateProgress(text, 'red')
 
-tab1.columnconfigure(0, minsize=150)
-tab1.columnconfigure(1, minsize=550)
+def ShowSuccess(text):
+    UpdateProgress(text, 'green')
+    
+def UpdateProgress(text, color = None):
+    progress.set(text)
+    if color != None:
+        progressLabel.config(foreground=color)
+    else:
+        progressLabel.config(foreground='black')
+    root.update()
+
+def CreateTextboxRow(frame, rowIndex, label):
+    label = ttk.Label(frame, text = label)
+    label.grid(row = rowIndex, column = 0, sticky = W, padx = 10, pady = 10)
+    text_box = Text(frame, wrap='word', width=50, height=1)
+    text_box.grid(row=rowIndex, column=1, sticky = W, padx = 10, pady = 10)
+    return text_box
+
+def CreateButtonRow(frame, rowIndex, text, command, var):
+    button = ttk.Button(frame, width=15, text = text, command=command)
+    button.grid(row = rowIndex, column = 0, padx = 10, pady = 10)
+    if (var != None):
+        label = ttk.Label(frame, textvariable = var)
+        label.grid(row = rowIndex, column = 1, sticky = W, padx = 10, pady = 10)
+
+def OpenPSPFolder():
+    global lastDir
+    path = filedialog.askopenfilename(
+        title="Select PSP file",
+        filetypes=[("Zip Files", "*.zip")])
+    pspFolder.set(path)
+    lastDir = os.path.dirname(path)
+    workingFolder.set(lastDir)
+
+def OpenPSPFolder2():
+    global lastDir
+    path = filedialog.askdirectory(
+        title="Select PSP folder")
+    pspFolder.set(path)
+    lastDir = os.path.dirname(path)
+    workingFolder.set(lastDir)
+
+def OpenWorkingFolder():
+    global lastDir
+    path = filedialog.askdirectory(initialdir=lastDir, title="Choose PSP")
+    workingFolder.set(path)
+    lastDir = os.path.dirname(path)
+
+def UnzipFile(zip_path, extract_to):
+    top_level_dirs = set()
+
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(extract_to)
+
+        for member in zip_ref.namelist():
+            top_level_dir = os.path.normpath(member).split(os.sep)[0]
+            top_level_dirs.add(top_level_dir)
+
+    return list(top_level_dirs)[0]
+
+def CheckPackage(package):
+    masterCopy = os.path.join(package, "mastercopy")
+    checksumFile = FindFile(package, "md5_", ".md5")
+    infoFile = FindFile(package, "info_", ".xml")
+
+    return os.path.exists(masterCopy) and checksumFile is not None and infoFile is not None
+    
+
+def ConvertToJpg(input_dir, output_dir):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    files = os.listdir(input_dir)
+    total = len(files)
+    for idx,filename in enumerate(files):
+        if filename.lower().endswith('.jp2'):
+            jp2_path = os.path.join(input_dir, filename)
+            img = Image.open(jp2_path)
+            jpg_filename = os.path.splitext(filename)[0] + '.jpg'
+            jpg_path = os.path.join(output_dir, jpg_filename)
+            UpdateProgress('Converting to JGP ' + str(idx+1) + '/' + str(total) + "...")
+            img.convert('RGB').save(jpg_path, 'JPEG', quality=95)
+            if (CheckLimit(jpg_path)):
+                print(jpg_path)
+
+def CreateFilesList(directory, output_file):
+    if os.path.exists(output_file):
+        os.remove(output_file)
+
+    files = [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
+    with open(output_file, 'w') as file:
+        for filename in files:
+            file.write(filename + '\n')
+
+def CheckLimit(file_path):
+    file_size_bytes = os.path.getsize(file_path)
+    file_size_mb = file_size_bytes / (1024 * 1024)
+    return file_size_mb > 8
+
+def SaveSettings(serverUrl, apiKey):
+    settings = {
+        "ServerURL": serverUrl,
+        "APIKey": apiKey
+    }
+    json_object = json.dumps(settings, indent=4)
+    with open(SETTINGS_FILE, "w") as outfile:
+        outfile.write(json_object)
+
+def LoadSettings():
+    if os.path.exists(SETTINGS_FILE):
+        with open(SETTINGS_FILE, 'r') as openfile:
+            settings = json.load(openfile)
+        serverUrlTextbox.delete("1.0", END)
+        serverUrlTextbox.insert(END, settings['ServerURL'])
+        apiKeyTextbox.delete("1.0", END)
+        apiKeyTextbox.insert(END, settings['APIKey'])
+
+def LoadEngines(serverUrl, apiKey, loadEnginesButton):
+    if (serverUrl != '' and apiKey != ''):
+        SaveSettings(serverUrl, apiKey)
+        enginesSelection = LoadEnginesFromAPI(serverUrl, apiKey)
+        if (enginesSelection != None):
+            LoadSettings()
+            loadEnginesButton.destroy()
+            ShowFullGUI(enginesSelection)
+
+def OpenFolder(folder_path):
+    if platform.system() == "Windows":
+        os.startfile(folder_path)
+    elif platform.system() == "Darwin":  # macOS
+        subprocess.run(["open", folder_path])
+    else:  # Linux and other Unix-like systems
+        subprocess.run(["xdg-open", folder_path])
+
+def SendRequest(serverUrl, apiKey, engineId, url_file, imagesPath):
+    request_dict = CreateRequest(engineId, url_file)
+    requestId = PostRequest(serverUrl, apiKey, request_dict)
+    if requestId != None:
+        numberOfImages = UploadImages(serverUrl, apiKey, request_dict, requestId, imagesPath)
+        return [requestId, numberOfImages]
+    else:
+        return None
+
+def SaveRequest(pspFolder, package, workingFolder, requestId, numberOfImages, date):
+    fileExists = os.path.isfile(DATA_FILE)
+    with open(DATA_FILE, 'a', newline='') as csvfile:
+        csvwriter = csv.writer(csvfile)
+        if not fileExists:
+            csvwriter.writerow(["PSP", "Package", "Working", "ID", "Date", "Images", "Status", "Result"])
+        csvwriter.writerow([pspFolder, package, workingFolder, requestId, date, numberOfImages, 'sent', ''])
+
+def CalculateWC(folder, extension, output):
+    numberOfFiles = 0
+    with open(output, 'w', newline='') as csvfile:
+        # Set up CSV writer
+        csvwriter = csv.writer(csvfile)
+        csvwriter.writerow(['File Name', 'Average WC'])
+        
+        # Iterate through all XML files in the folder
+        for file_name in os.listdir(folder):
+            if file_name.endswith(extension):
+                file_path = os.path.join(folder, file_name)
+                avg_wc = CalculateAverageWC(file_path)
+
+                if avg_wc is not None:
+                    # Write the result to the CSV file
+                    csvwriter.writerow([file_name, f"{avg_wc:.6f}"])
+                    numberOfFiles = numberOfFiles + 1
+                else:
+                    # Handle case where no WC values were found
+                    csvwriter.writerow([file_name, ''])
+    return numberOfFiles
+
+def ExtractNamespace(root):
+    if '}' in root.tag:
+        return root.tag.split('}')[0].strip('{')
+    return None
+
+def CalculateAverageWC(file):
+    # Parse the XML file
+    tree = ET.parse(file)
+    root = tree.getroot()
+
+    namespace = ExtractNamespace(root)
+    if not namespace:
+        return None, None  # Handle case where no namespace is found
+
+    # Find all 'String' elements and extract the 'WC' attribute
+    wc_values = []
+    for string_element in root.findall(f".//{{{namespace}}}String"):
+        wc = string_element.get('WC')
+        if wc is not None:
+            wc_values.append(float(wc))
+
+    # Calculate average WC, return None if there are no WC values
+    if wc_values:
+        return sum(wc_values) / len(wc_values)
+    return None
+
+def Run(serverUrl, apiKey, engine, pspFolder, workingFolder):
+    SaveSettings(serverUrl, apiKey)
+
+    if pspFolder == NOT_SELECTED or workingFolder == NOT_SELECTED:
+        ShowError('Není vybrán PSP balíček a pracovní složka!')
+        return
+
+    if os.path.isfile(pspFolder) and zipfile.is_zipfile(pspFolder):
+        UpdateProgress("Unzipping...")
+        resultFolder = UnzipFile(pspFolder, workingFolder)
+    else:
+        resultFolder = pspFolder
+
+    package = os.path.join(workingFolder, resultFolder)
+
+    altoFolder = os.path.join(package, "alto")
+    CalculateWC(altoFolder, ".xml", os.path.join(workingFolder, QUALITY_FILE))
+
+    if CheckPackage(package):
+        jpgFolder = os.path.join(workingFolder, JPG_FOLDER)
+        ConvertToJpg(os.path.join(package, "mastercopy"), jpgFolder)
+        fileList = os.path.join(jpgFolder, "list.txt")
+        CreateFilesList(jpgFolder, fileList)
+        UpdateProgress("Sending request to PERO...")
+        [requestId, numberOfImages]= SendRequest(serverUrl, apiKey, engine, fileList, jpgFolder)
+        if requestId != None:
+            SaveRequest(pspFolder, package, workingFolder, requestId, numberOfImages, datetime.now())
+            LoadData(tree)
+            ShowSuccess('Request sent!')
+    else:
+        ShowError('Input is not a valid PSP package!')
 
 NOT_SELECTED = "[Folder not selected]"
-pspFile = StringVar()
+pspFolder = StringVar()
 workingFolder = StringVar()
 engine = StringVar()
-pspFile.set(NOT_SELECTED)
+progress = StringVar()
+pspFolder.set(NOT_SELECTED)  
 workingFolder.set(NOT_SELECTED)
+engine.set(1)
+progress.set('')
+selectFileType = StringVar()
+selectFileType.set("zip")
+        
+row = 1
+serverUrlTextbox = CreateTextboxRow(tab1, row, "Server URL")
+row += 1
+apiKeyTextbox = CreateTextboxRow(tab1, row, "API key")
+row += 1
 
-serverUrlTB = CreateTextBoxRow(tab1, 1, "Server URL:")
-#serverUrlTB.insert(END, "https://pero-ocr.fit.vutbr.cz/api")
-apiKeyTB = CreateTextBoxRow(tab1, 2, "API key:")
-#apiKeyTB.insert(END, "Nl6AxLWWvf0JxRSievnM2WLnGyCgrGWbsInx1ZPTctE")
+loadEnginesButton = ttk.Button(tab1, width=15, text = "LoadEngines", command=lambda: LoadEngines(serverUrlTextbox.get("1.0", END).strip(), apiKeyTextbox.get("1.0", END).strip(), loadEnginesButton))
+loadEnginesButton.grid(row = row, column = 0, columnspan = 2, padx = 10, pady = 10)
+row += 1
 
-label = ttk.Label(tab1, text = "Engine:")
-label.grid(row = 3, column = 0, padx = 10, pady = 10)
-buttonLoadEngines = ttk.Button(tab1, width=15, text = "Load engines", padding=5, command=lambda: ShowAvailableEngines(serverUrlTB.get("1.0",END).strip(), apiKeyTB.get("1.0",END).strip(), engine))
-buttonLoadEngines.grid(row = 3, column = 1, padx = 10, pady = 10)
+progressLabel = ttk.Label(tab1, textvariable = progress)
+progressLabel.grid(row = row, column = 0, columnspan = 2, padx = 10, pady = 10)
 
-LoadTextboxesFromSettings()
+def ShowFullGUI(enginesSelection):
+    global row
 
-if (serverUrlTB.get("1.0",END).strip() != "" and apiKeyTB.get("1.0",END).strip() != ""):
-    ShowAvailableEngines(serverUrlTB.get("1.0",END).strip(), apiKeyTB.get("1.0",END).strip(), engine)
+    label = ttk.Label(tab1, text = "Engine:")
+    label.grid(row = row, column = 0, sticky = W, padx = 10, pady = (10, 0))
 
-# Tab 2 - Přehled přečtených balíčků, výsledky a možnost výměny dat za data z PERO
-def UpdateRequestStatus(requestId, status):
-     # Read the CSV file into memory
-    rows = []
-    with open("requests.csv", 'r', newline='') as file:
-        reader = csv.reader(file)
-        #headers = next(reader)  # Save the headers
-        for row in reader:
-            if row[2] == requestId:  # Check the value of the third column
-                row[4] = status  # Update the value of the fourth column
-            rows.append(row)
+    for key, value in enginesSelection.items():
+        radio_button = ttk.Radiobutton(tab1, text=key, variable=engine, value=value['id'])
+        radio_button.grid(row = row, column = 1, sticky = W, pady = (10, 0))
+        row += 1
+    
+    label = ttk.Label(tab1, text = "Select source PSP and working folder, to which unzipped data will be saved:")
+    label.grid(row = row, column = 0, columnspan = 2, sticky= W, padx = 10, pady = (20, 10))
+    row += 1
 
-    # Write the updated rows back to the CSV file
-    with open("requests.csv", 'w', newline='') as file:
-        writer = csv.writer(file)
-        #writer.writerow(headers)  # Write the headers
-        writer.writerows(rows)  # Write the updated rows
+    selectionFrame = ttk.Frame(tab1)
+    selectionFrame.grid(row = row, column = 0, padx = 10, pady = 10)
 
-def load_csv_to_treeview(tree, csv_file):
-    # Clear the existing contents of the treeview
+    button = ttk.Button(selectionFrame, width=15, text = "PSP zip", command=OpenPSPFolder)
+    button.pack()
+    button = ttk.Button(selectionFrame, width=15, text = "PSP folder", command=OpenPSPFolder2)
+    button.pack()
+    label = ttk.Label(tab1, textvariable = pspFolder)
+    label.grid(row = row, column = 1, sticky = W, padx = 10, pady = 10)
+
+    row += 1
+    CreateButtonRow(tab1, row, "Working folder", OpenWorkingFolder, workingFolder)
+    row += 1
+
+    button = ttk.Button(tab1, width=15, text = "Send to PERO", command=lambda: Run(serverUrlTextbox.get("1.0", END).strip(), apiKeyTextbox.get("1.0", END).strip(), engine.get(), pspFolder.get(), workingFolder.get()))
+    button.grid(row = row, column = 0, columnspan = 2, padx = 10, pady = 10)
+    row += 1
+
+    UpdateProgress('')
+    progressLabel.grid(row = row, column = 0, columnspan = 2, padx = 10, pady = 10)
+
+
+###############################################################################
+# tab 2 - Výsledky
+###############################################################################
+def ShowError2(text):
+    UpdateProgress2(text, 'red')
+
+def ShowSuccess2(text):
+    UpdateProgress2(text, 'green')
+    
+def UpdateProgress2(text, color = None):
+    progress2.set(text)
+    if color != None:
+        progressLabel2.config(foreground=color)
+    else:
+        progressLabel2.config(foreground='black')
+    root.update()
+
+def LoadData(tree):    
     for row in tree.get_children():
         tree.delete(row)
-    
-    # Open the CSV file
-    with open(csv_file, newline='') as file:
+
+    if not os.path.isfile(DATA_FILE):
+        return
+
+    with open(DATA_FILE, newline='') as file:
         reader = csv.reader(file)
-        # Get the CSV headers
-        headers = ["PSP","working","ID","datum","result"]
-        
-        # Configure the treeview columns
+
+        headers = next(reader)
+
         tree["columns"] = headers
         for header in headers:
             tree.heading(header, text=header)
-            tree.column(header, anchor=W)
-        
-        # Insert CSV rows into the treeview
-        for row in reader:
-            tree.insert("", END, values=row)
+            tree.column(header, width=(WINDOW_WIDTH-20)//(len(headers)-2), anchor=W, stretch=NO)
 
+        replaced = []
+        other = []
+        
+        for row in reader:
+            if row[5] == "replaced":
+                replaced.append(row)
+            else:
+                other.append(row)
+        other.sort(key=lambda x: x[4], reverse = True)
+        replaced.sort(key=lambda x: x[4], reverse = True)
+
+        rows = other + replaced
+
+        InsertRows(rows)
+        #if len(other) > 0:
+        #    tree.insert('', 'end', values=('---', '---'), tags=('spacer',))
+        #InsertRows(replaced)
+        
+    SetDisplay(tree)
+
+def InsertRows(rows):
+    for i, row in enumerate(rows):
+        if i % 2 == 0:
+            tag = 'evenrow'
+        else:
+            tag = 'oddrow'
+        row_id = tree.insert("", END, values=row, tags=(tag,))
+
+def SetDisplay(tree):
+    tree["displaycolumns"] = ["Date", "PSP", "Images", "Status", "Result"]
+    tree.column("Date", width=(WINDOW_WIDTH-20) // 12*2)
+    tree.column("PSP", width=(WINDOW_WIDTH-20) // 12*6)
+    tree.column("Images", width=(WINDOW_WIDTH-20) // 12*1, anchor=E)
+    tree.column("Status", width=(WINDOW_WIDTH-20) // 12*1, anchor=E)
+    tree.column("Result", width=(WINDOW_WIDTH-20) // 12*2, anchor=E)
+
+def UpdateStatus(requestId, newValue):
+    UpdateData(requestId, 6, newValue)
+
+def UpdateResult(requestId, newValue):
+    UpdateData(requestId, 7, newValue)
+
+def UpdateData(requestId, newValueIndex, newValue):
+    rows = []
+    with open(DATA_FILE, 'r', newline='') as file:
+        reader = csv.reader(file)
+        headers = next(reader)  # Save the headers
+        for row in reader:
+            if row[3] == requestId:
+                row[newValueIndex] = newValue
+            rows.append(row)
+
+    with open(DATA_FILE, 'w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(headers)  # Write the headers
+        writer.writerows(rows)  # Write the updated rows
+
+def DeleteData(id, workingFolder, pspFolder, package):
+    UpdateProgress2("Deleting data")
+    DeleteFolder(os.path.join(workingFolder, JPG_FOLDER))
+    DeleteFolder(os.path.join(workingFolder, RESULT_FOLDER))
+    DeleteFile(os.path.join(workingFolder, QUALITY_FILE))
+    if os.path.isfile(pspFolder) and zipfile.is_zipfile(pspFolder):
+        DeleteFolder(package)
+    UpdateProgress2("Deleting record")
+    DeleteRequest(id)
+    ShowSuccess2("Data deleted")
+
+def DeleteFolder(folder):
+    if os.path.exists(folder):
+        # Remove the folder and all its contents
+        shutil.rmtree(folder)
+        
+def DeleteFile(file):
+    if os.path.exists(file):
+        if os.path.isfile(file):
+            os.remove(file)
+    
+def DeleteRequest(id):
+    with open(DATA_FILE, mode='r', newline='', encoding='utf-8') as infile:
+        reader = csv.reader(infile)
+        rows = list(reader)  # Convert the reader object to a list of rows
+
+    updated_rows = [row for row in rows if row[3] != id]
+
+    with open(DATA_FILE, mode='w', newline='', encoding='utf-8') as outfile:
+        writer = csv.writer(outfile)
+        writer.writerows(updated_rows)
+    LoadData(tree)
+
+def RetrieveResult(serverUrl, apiKey, requestId, workingFolder):
+    SaveSettings(serverUrl, apiKey)
+
+    page_status = get_request_status(serverUrl, apiKey, requestId)
+
+    resultFolder = os.path.join(workingFolder, RESULT_FOLDER)
+    os.makedirs(resultFolder, exist_ok=True)
+
+    session = requests.Session()
+
+    state_counts = defaultdict(int)
+    for page_name in sorted(page_status):
+        if page_status[page_name]['state'] == 'PROCESSED':
+            UpdateProgress2(page_name + ": " + page_status[page_name]['state'] + ", " + str(page_status[page_name]['quality']))
+            download_results(page_name, session, serverUrl, apiKey, requestId, resultFolder, True, False, True)
+        else:
+            UpdateProgress2(page_name + ": " + page_status[page_name]['state'])
+
+        state_counts[page_status[page_name]['state']] += 1
+
+    print('SUMMARY:')
+    for state in state_counts:
+        print(state, state_counts[state])
+
+    if state_counts['WAITING'] + state_counts['PROCESSING'] == 0:
+        print('ALL PAGES DONE')
+        numberOfFiles = CalculateWC(resultFolder, ".alto", os.path.join(resultFolder, QUALITY_FILE))
+        comparison = CompareQuality(workingFolder, resultFolder)
+        UpdateResult(requestId, str(round((numberOfFiles - len(comparison))/numberOfFiles*100) if numberOfFiles > 0 else 0) + " %")
+        UpdateStatus(requestId, "processed")
+        ProcessResult(resultFolder)
+        ShowSuccess2("Results retrieved")
+    else:
+        ShowError2("All files are not yet processed, please try again later")
+    LoadData(tree)
+
+def ProcessResult(folder):
+    # Create subfolders if they don't exist
+    txtFolder = os.path.join(folder, "txt")
+    altoFolder = os.path.join(folder, "alto")
+    os.makedirs(txtFolder, exist_ok=True)
+    os.makedirs(altoFolder, exist_ok=True)
+
+    # Iterate through all files in the folder
+    for filename in os.listdir(folder):
+        # Get the full path to the file
+        file_path = os.path.join(folder, filename)
+        
+        if os.path.isfile(file_path):
+            # Remove ".jpg" from filename if present
+            new_name = filename.replace('.jpg', '')
+            
+            if filename.endswith('.txt'):
+                # Move .txt files to the "txt" subfolder
+                new_path = os.path.join(txtFolder, new_name)
+                shutil.move(file_path, new_path)
+
+            elif filename.endswith('.alto'):
+                # Change extension from .xml to .alto and move to the "alto" subfolder
+                new_name = new_name.replace('.alto', '.xml')
+                new_path = os.path.join(altoFolder, new_name)
+                shutil.move(file_path, new_path)
+
+def ShowDetails(data):
+    messagebox.showinfo("Details", f"{data}")
+    
 def show_context_menu(event):
     selected_item = tree.identify_row(event.y)
     if selected_item:
         tree.selection_set(selected_item)
+        #print(tree.item(selected_item)['values'])
+        if tree.item(selected_item)['values'][6] != "sent":
+            context_menu.entryconfigure("Replace files", state=NORMAL)
+            context_menu.entryconfigure("Compare quality", state=NORMAL)
+        else:
+            context_menu.entryconfigure("Replace files", state=DISABLED)
+            context_menu.entryconfigure("Compare quality", state=DISABLED)
         context_menu.post(event.x_root, event.y_root)
 
 def on_context_menu_click(action):
     selected_item = tree.selection()[0]
     item_values = tree.item(selected_item, 'values')
-    #print(f"Context menu '{action}' clicked for {item_values}")
-    result = Retrieve(serverUrlTB.get("1.0",END).strip(), apiKeyTB.get("1.0",END).strip(), item_values[2], os.path.join(item_values[1], "result"))
-    if result == 0:
-        UpdateRequestStatus(item_values[2], 100)
-        Reload()
+    id = item_values[3]
+    match action:
+        case "Retrieve":
+            RetrieveResult(serverUrlTextbox.get("1.0", END).strip(), apiKeyTextbox.get("1.0", END).strip(), id, item_values[2])
+        case "Compare":
+            ShowQualityComparison(item_values[2], os.path.join(item_values[2], RESULT_FOLDER))
+        case "Replace":
+            ReplaceFiles(os.path.join(item_values[2], RESULT_FOLDER), item_values[1], item_values[0], item_values[2], id)
+        case "Open":
+            folder = item_values[1]
+            if item_values[7] != '':
+                folder = os.path.join(item_values[2], RESULT_FOLDER)
+            OpenFolder(folder)
+        case "Delete":
+            DeleteData(id, item_values[2], item_values[0], item_values[1])
+        case "Details":
+            ShowDetails(item_values)
         
-def Reload():
-    load_csv_to_treeview(tree, 'requests.csv')
 
-#buttonReload = ttk.Button(tab2, width=15, text = "Reload", padding=5, command=Reload)
-#buttonReload.pack()
+def on_tree_click(event):
+    selected_item = tree.identify_row(event.y)
+    if selected_item:
+        tree.selection_set(selected_item)
+        item_values = tree.item(selected_item, 'values')
+        ShowDetails(item_values)
 
-tree = ttk.Treeview(tab2, show='headings')
-tree.pack(fill=BOTH, expand=True)
+progress2 = StringVar()
+progress2.set('')
 
-Reload()
+table_frame = ttk.Frame(tab2)
+table_frame.pack(expand=True, fill='both')
+
+progressLabel2 = ttk.Label(table_frame, textvariable = progress2)
+progressLabel2.pack(side=TOP, pady=10)
+
+columns = ('#1', '#2', '#3', '#4', '#5', '#6', '#7')
+tree = ttk.Treeview(table_frame, columns=columns, show='headings')
+tree.tag_configure('oddrow', background="lightgrey")
+tree.tag_configure('evenrow', background="white")
+tree.tag_configure('spacer', background='white')
+style = ttk.Style()
+style.configure("Treeview", rowheight=30)
+
+# Create a vertical scrollbar for the Treeview
+scrollbar = ttk.Scrollbar(table_frame, orient=VERTICAL, command=tree.yview)
+tree.configure(yscroll=scrollbar.set)
+
+# Load CSV content into the treeview
+LoadData(tree)
+
+# Pack the Treeview and scrollbar
+tree.pack(side=LEFT, expand=True, fill='both')
+scrollbar.pack(side=RIGHT, fill='y')
 
 # Create the context menu
 global context_menu
-context_menu = Menu(root, tearoff=0)
-context_menu.add_command(label="Retrieve result", command=lambda: on_context_menu_click("Edit"))
+context_menu = Menu(tab2, tearoff=0)
+context_menu.add_command(label="Retrieve result", command=lambda: on_context_menu_click("Retrieve"))
+context_menu.add_command(label="Compare quality", command=lambda: on_context_menu_click("Compare"))
+context_menu.add_command(label="Replace files", command=lambda: on_context_menu_click("Replace"))
+context_menu.add_separator()
+context_menu.add_command(label="Open folder", command=lambda: on_context_menu_click("Open"))
+context_menu.add_command(label="Details", command=lambda: on_context_menu_click("Details"))
 context_menu.add_separator()
 context_menu.add_command(label="Delete", command=lambda: on_context_menu_click("Delete"))
 
 # Bind right-click event to the treeview
 tree.bind("<Button-3>", show_context_menu)
-  
-root.mainloop()   
+tree.bind("<Double-1>", on_tree_click)
+
+
+###############################################################################
+# tab 3 - nahrazení souborů
+###############################################################################
+
+def CopyFiles(sourceFolder, destinationFolder):
+    fileNames = [f for f in sorted(os.listdir(destinationFolder))]
+    files = [f for f in sorted(os.listdir(sourceFolder))]
+    for i in range(len(fileNames)):
+        sourcePath = os.path.join(sourceFolder, files[i])
+        destinationPath = os.path.join(destinationFolder, fileNames[i])
+        shutil.copy2(sourcePath, destinationPath)
+
+def GenerateMD5(filePath):
+    md5 = hashlib.md5()
+    
+    with open(filePath, "rb") as file:
+        # Read the file in chunks to handle large files
+        for chunk in iter(lambda: file.read(8192), b""):
+            md5.update(chunk)
+    
+    return md5.hexdigest()
+
+def GenerateMD5File(folderPath, outputPath, excludedFiles):      
+    with open(outputPath, "w") as output:
+        for foldername, subfolders, filenames in os.walk(folderPath):
+            for filename in filenames:
+                filePath = os.path.join(foldername, filename)
+                if filePath in excludedFiles:
+                    continue  # Skip generating hash for excluded files   
+                md5Hash = GenerateMD5(filePath)
+                relativePath = "/" + os.path.relpath(filePath, folderPath).replace("\\", "/")
+                output.write(f"{md5Hash} {relativePath}\n")
+                #print(f"Processed {file_path}")
+
+def ReplaceChecksum(file, value):
+    try:
+        # Parse the XML file
+        tree = ET.parse(file)
+        root = tree.getroot()
+
+        # Find the element with the name "checksum"
+        checksumElement = root.find(".//checksum")
+
+        if checksumElement is not None:
+            # Update the "checksum" attribute with the new value
+            checksumElement.set("checksum", value)
+            #print(f"Updated 'checksum' attribute to: {value}")
+            # Save the modified XML back to the file
+            tree.write(file)
+        else:
+            print("Error: 'checksum' element not found in the XML file.")
+
+    except ET.ParseError as e:
+        print(f"Error parsing XML: {e}")
+    except Exception as e:
+        print(f"Error: {e}")
+
+def FindFile(folder, prefix, suffix):
+    for filename in os.listdir(folder):
+        if filename.startswith(prefix) and filename.endswith(suffix):
+            return os.path.join(folder, filename)
+    return None
+
+def CountFilesInFolder(folderPath):
+    if os.path.isdir(folderPath):
+        return len([f for f in os.listdir(folderPath)])
+    else:
+        return 0
+
+def ReadWCFromCsv(csvFile):
+    wc_data = []
+    with open(csvFile, mode='r', newline='') as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            wc_value = float(row['Average WC'])   # Assuming the column name is 'WC'
+            wc_data.append(wc_value)      # Store WC value by row index
+    return wc_data
+
+def ReadFilenames(csvFile):
+    file_names = []
+    with open(csvFile, mode='r', newline='') as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            file_names.append(row['File Name'])  # Assuming the column name is 'File Name'
+    return file_names
+
+def CompareQuality(originalFolder, resultFolder):
+    originalQuality = os.path.join(originalFolder, QUALITY_FILE)
+    resultQuality = os.path.join(resultFolder, QUALITY_FILE)
+    
+    # Read both CSV files into dictionaries
+    wc_data_file1 = ReadWCFromCsv(originalQuality)
+    wc_data_file2 = ReadWCFromCsv(resultQuality)
+
+    file_names = ReadFilenames(originalQuality)  # Use the file names from the first file (in order)
+
+    # List to store the results where WC in the second file is lower than in the first
+    results = []
+
+    # Compare WC values for matching file names
+    for index, (wc1, wc2) in enumerate(zip(wc_data_file1, wc_data_file2)):
+        if wc2 < wc1:
+            results.append([file_names[index], wc1, wc2])
+
+    return results
+
+def ShowQualityComparison(originalFolder, resultFolder):
+    results = CompareQuality(originalFolder, resultFolder)
+    if len(results) > 0:
+        messagebox.showinfo("Quality comparison", f"Pages having lower average WC:\n{results}")
+    else:
+        messagebox.showinfo("Quality comparison", "All pages have higher average WC.")
+
+def ReplaceFiles(sourceFolder, destinationFolder, destinationPackage, workingFolder, id = None):
+    UpdateProgress2("Creating backup of PSP")
+    CreateBackup(destinationPackage)
+    
+    altoSourceFolder = os.path.join(sourceFolder, "alto")
+    txtSourceFolder = os.path.join(sourceFolder, "txt")
+    altoDestinationFolder = os.path.join(destinationFolder, "alto")
+    txtDestinationFolder = os.path.join(destinationFolder, "txt")
+    checksumFile = FindFile(destinationFolder, "md5_", ".md5")
+    infoFile = FindFile(destinationFolder, "info_", ".xml")
+
+    UpdateProgress2("Replacing ALTO")
+    originalFilesCount = CountFilesInFolder(altoDestinationFolder)
+    newFilesCount = CountFilesInFolder(altoSourceFolder)
+    if originalFilesCount == newFilesCount:
+        CopyFiles(altoSourceFolder, altoDestinationFolder)
+        print(f"ALTO updated")
+    else:
+        ShowError2(f"ALTO not updated: Number of files does not match! Number of original files: {originalFilesCount}; number of new files: {newFilesCount}.")
+        return
+
+    UpdateProgress2("Replacing TXT")
+    originalFilesCount = CountFilesInFolder(txtDestinationFolder)
+    newFilesCount = CountFilesInFolder(txtSourceFolder)
+    if originalFilesCount == newFilesCount:
+        CopyFiles(txtSourceFolder, txtDestinationFolder) 
+        print(f"TXT updated")
+    else:
+        ShowError2(f"TXT not updated: Number of files does not match! Number of original files: {originalFilesCount}; number of new files: {newFilesCount}.")
+        return
+
+    UpdateProgress2("Replacing hash")
+    GenerateMD5File(destinationFolder, checksumFile, [os.path.join("", checksumFile), os.path.join("", infoFile)])
+    print(f"md5 updated")
+
+    ReplaceChecksum(infoFile, GenerateMD5(checksumFile))
+    print(f"checksum updated")
+
+    if os.path.isfile(destinationPackage):
+        UpdateProgress2("Zipping")
+        print(destinationPackage)
+        ZipFolder(destinationFolder, destinationPackage)
+
+    if id != None:
+        UpdateStatus(id, "replaced")
+        LoadData(tree)
+        DeleteData(id, workingFolder, destinationPackage, destinationFolder)
+
+    ShowSuccess2("Replaced")
+
+def CreateBackup(package):
+    if os.path.isfile(package):
+        backup_zip = package.replace('.zip', '_backup.zip')
+        shutil.copyfile(package, backup_zip)
+    elif os.path.isdir(package):
+        backup_folder = f"{package}_backup"
+        shutil.copytree(package, backup_folder)
+
+def ZipFolder(folder, destination):
+    baseFolder = os.path.basename(folder)
+    with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(folder):
+            for file in files:
+                file_path = os.path.join(root, file)
+                # Create the relative path to store in the zip file (starting with the folder name)
+                relative_path = os.path.join(baseFolder, os.path.relpath(file_path, folder))
+                # Add the file to the zip archive with the correct folder structure
+                zipf.write(file_path, relative_path)
+
+###############################################################################
+# načtení nastavení a spuštění programu
+###############################################################################
+LoadSettings()
+LoadEngines(serverUrlTextbox.get("1.0", END).strip(), apiKeyTextbox.get("1.0", END).strip(), loadEnginesButton)
+
+root.mainloop()
