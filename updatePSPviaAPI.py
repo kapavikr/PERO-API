@@ -322,7 +322,7 @@ def ConvertToJpg(input_dir, output_dir):
             jp2_path = os.path.join(input_dir, filename)
             jpg_filename = os.path.splitext(filename)[0] + '.jpg'
             jpg_path = os.path.join(output_dir, jpg_filename) 
-            UpdateProgress('Converting to JGP ' + str(idx+1) + '/' + str(total) + "...")
+            UpdateProgress('Converting to JPG ' + str(idx+1) + '/' + str(total) + "...")
             
             img = cv2.imread(jp2_path)       
             # Save the image as jpg
