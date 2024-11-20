@@ -10,6 +10,7 @@ import importlib.metadata
 from tkinter import *
 from tkinter import ttk
 from tkinter import filedialog
+from tkinter import font
 import os
 import zipfile
 #from PIL import Image
@@ -26,12 +27,14 @@ import shutil
 import hashlib
 import xml.etree.ElementTree as ET
 import cv2
+import platform
 
 SETTINGS_FILE = "settings.json"
 JPG_FOLDER = "jpg"
 RESULT_FOLDER = "result"
 DATA_FILE = "data.csv"
 QUALITY_FILE = "quality.csv"
+QUALITYCOMPARISON_FILE = "qualityComparison.csv" 
 WINDOW_WIDTH = 1000
 
 ###############################################################################
@@ -39,14 +42,20 @@ WINDOW_WIDTH = 1000
 ###############################################################################
 def LoadEnginesFromAPI(server_url, api_key):
     r = requests.get(f"{server_url}/get_engines", headers={"api-key": api_key})
+    print(r.status_code)
     if r.status_code != 200:
         ShowError(f'ERROR: Failed to get available OCR engine list. Code: {r.status_code}')
         print(f'ERROR: Failed to get available OCR engine list. Code: {r.status_code}')
         return None
-    result = r.json()
-    if result['status'] not in ["success", "succes"]:
-        ShowError(f'ERROR: Failed to get available OCR engine list. Status: {result["status"]}')
-        print(f'ERROR: Failed to get available OCR engine list. Status: {result["status"]}')
+
+    try:
+        result = r.json()
+        if result['status'] not in ["success", "succes"]:
+            ShowError(f'ERROR: Failed to get available OCR engine list. Status: {result["status"]}')
+            print(f'ERROR: Failed to get available OCR engine list. Status: {result["status"]}')
+            return None
+    except:
+        print(f'ERROR: Communication with API failed.')
         return None
 
     return result['engines']
@@ -369,6 +378,8 @@ def LoadEngines(serverUrl, apiKey, loadEnginesButton):
             LoadSettings()
             loadEnginesButton.destroy()
             ShowFullGUI(enginesSelection)
+        else:
+            ShowError("Nepodařilo se spopjit s API. Zkontrolujte zadané údaje a zkuste to znovu.")
 
 def OpenFolder(folder_path):
     if platform.system() == "Windows":
@@ -633,6 +644,7 @@ def DeleteData(id, workingFolder, pspFolder, package):
     DeleteFolder(os.path.join(workingFolder, JPG_FOLDER))
     DeleteFolder(os.path.join(workingFolder, RESULT_FOLDER))
     DeleteFile(os.path.join(workingFolder, QUALITY_FILE))
+    DeleteFile(os.path.join(workingFolder, QUALITYCOMPARISON_FILE))
     if os.path.isfile(pspFolder) and zipfile.is_zipfile(pspFolder):
         DeleteFolder(package)
     UpdateProgress2("Deleting record")
@@ -915,17 +927,87 @@ def CompareQuality(originalFolder, resultFolder):
 
     # Compare WC values for matching file names
     for index, (wc1, wc2) in enumerate(zip(wc_data_file1, wc_data_file2)):
-        if wc2 < wc1:
-            results.append([file_names[index], wc1, wc2])
+    #if wc2 < wc1:
+        results.append([file_names[index], wc1, wc2])
 
     return results
 
 def ShowQualityComparison(originalFolder, resultFolder):
     results = CompareQuality(originalFolder, resultFolder)
-    if len(results) > 0:
-        messagebox.showinfo("Quality comparison", f"Pages having lower average WC:\n{results}")
-    else:
-        messagebox.showinfo("Quality comparison", "All pages have higher average WC.")
+    SaveQualityComparison(results, originalFolder)
+    ShowTable(results, originalFolder)
+
+def ShowTable(data, workingFolder):
+    # Create a new window for the table
+    table_window = Toplevel()
+    table_window.title("Result comparison")
+    table_window.geometry("800x600")  # Set window size
+
+    show_button = ttk.Button(table_window, text="Open in .csv", command=lambda: OpenCsv(os.path.join(workingFolder, QUALITYCOMPARISON_FILE)))
+    show_button.pack(pady=10)
+
+    # Set up a monospace font for alignment
+    monospace_font = font.Font(family="Courier", size=10)
+
+    # Create a Frame to hold the Text widget and Scrollbar
+    frame = Frame(table_window)
+    frame.pack(expand=True, fill="both")
+
+    # Add a Text widget to display the table
+    text_widget = Text(frame, wrap="none", font=monospace_font)
+    text_widget.pack(side="left", expand=True, fill="both")
+
+    # Add a vertical scrollbar
+    scrollbar = Scrollbar(frame, orient="vertical", command=text_widget.yview)
+    scrollbar.pack(side="right", fill="y")
+
+    # Link the Text widget to the scrollbar
+    text_widget.configure(yscrollcommand=scrollbar.set)
+
+    # Header row
+    header = f"{'Page':<50} {'Original':>10} {'New':>10}\n"
+    text_widget.insert("end", header)
+    text_widget.insert("end", "=" * len(header) + "\n")
+
+    # Add data rows
+    for idx,row in enumerate(data):
+        title, value1, value2 = row
+        row_text = f"{title:<50} {value1:>10.2f} {value2:>10.2f}\n"
+        start_index = text_widget.index("end")  # Start index of the row text
+        text_widget.insert("end", row_text)
+
+        # Highlight the larger value
+        if value1 >= value2:
+            bold_start = 57
+        else:
+            bold_start = 68
+
+        rowNr = idx + 3
+        text_widget.tag_add("bold", str(rowNr) + "." + str(bold_start), str(rowNr) + "." + str(bold_start+4))
+
+    # Configure the bold tag
+    text_widget.tag_configure("bold", background="yellow")
+
+    # Disable editing of the Text widget
+    text_widget.config(state="disabled")
+
+def SaveQualityComparison(results, workingFolder):
+    with open(os.path.join(workingFolder, QUALITYCOMPARISON_FILE), mode='w', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        # Write the header
+        writer.writerow(['Title', 'Original', 'New'])
+        # Write the data rows
+        writer.writerows(results)
+
+def OpenCsv(file_path):
+    if os.path.exists(file_path):
+        system_name = platform.system()
+        if system_name == "Windows":
+            os.startfile(file_path)  # Windows
+        elif system_name == "Darwin":
+            os.system(f"open '{file_path}'")  # macOS
+        elif system_name == "Linux":
+            os.system(f"xdg-open '{file_path}'")  # Linux
 
 def ReplaceFiles(sourceFolder, destinationFolder, destinationPackage, workingFolder, id = None):
     UpdateProgress2("Creating backup of PSP")
