@@ -31,6 +31,9 @@ import platform
 
 SETTINGS_FILE = "settings.json"
 JPG_FOLDER = "jpg"
+ALTO_FOLDER = "alto"
+MD5_PREFIX = "md5"
+INFO_PREFIX = "info"
 RESULT_FOLDER = "result"
 DATA_FILE = "data.csv"
 QUALITY_FILE = "quality.csv"
@@ -306,8 +309,18 @@ def UnzipFile(zip_path, extract_to):
 
 def CheckPackage(package):
     masterCopy = os.path.join(package, "mastercopy")
-    checksumFile = FindFile(package, "md5_", ".md5")
-    infoFile = FindFile(package, "info_", ".xml")
+
+    global MD5_PREFIX
+    checksumFile = FindFile(package, MD5_PREFIX, ".md5")
+    if checksumFile is None: 
+        MD5_PREFIX = "MD5"
+        checksumFile = FindFile(package, MD5_PREFIX, ".md5")
+
+    infoFile = FindFile(package, INFO_PREFIX, ".xml")
+
+    print(masterCopy)
+    print(checksumFile)
+    print(infoFile)
 
     return os.path.exists(masterCopy) and checksumFile is not None and infoFile is not None
     
@@ -469,7 +482,18 @@ def Run(serverUrl, apiKey, engine, pspFolder, workingFolder):
 
     package = os.path.join(workingFolder, resultFolder)
 
-    altoFolder = os.path.join(package, "alto")
+    global ALTO_FOLDER
+    altoFolder = os.path.join(package, ALTO_FOLDER)
+    print(altoFolder)
+    #if not os.path.exists(altoFolder):
+    #    altoFolder = os.path.join(package, ALTO_FOLDER.upper())
+    #    print(altoFolder)
+    #    if os.path.exists(altoFolder):
+    #        ALTO_FOLDER = ALTO_FOLDER.upper()
+    #    else:
+    #        ShowError('There is no alto folder in selected PSP package')
+    #        return
+    
     CalculateWC(altoFolder, ".xml", os.path.join(workingFolder, QUALITY_FILE))
 
     if CheckPackage(package):
@@ -712,7 +736,7 @@ def RetrieveResult(serverUrl, apiKey, requestId, workingFolder):
 def ProcessResult(folder):
     # Create subfolders if they don't exist
     txtFolder = os.path.join(folder, "txt")
-    altoFolder = os.path.join(folder, "alto")
+    altoFolder = os.path.join(folder, ALTO_FOLDER)
     os.makedirs(txtFolder, exist_ok=True)
     os.makedirs(altoFolder, exist_ok=True)
 
@@ -1013,12 +1037,12 @@ def ReplaceFiles(sourceFolder, destinationFolder, destinationPackage, workingFol
     UpdateProgress2("Creating backup of PSP")
     CreateBackup(destinationPackage)
     
-    altoSourceFolder = os.path.join(sourceFolder, "alto")
+    altoSourceFolder = os.path.join(sourceFolder, ALTO_FOLDER)
     txtSourceFolder = os.path.join(sourceFolder, "txt")
-    altoDestinationFolder = os.path.join(destinationFolder, "alto")
+    altoDestinationFolder = os.path.join(destinationFolder, ALTO_FOLDER)
     txtDestinationFolder = os.path.join(destinationFolder, "txt")
-    checksumFile = FindFile(destinationFolder, "md5_", ".md5")
-    infoFile = FindFile(destinationFolder, "info_", ".xml")
+    checksumFile = FindFile(destinationFolder, MD5_PREFIX, ".md5")
+    infoFile = FindFile(destinationFolder, INFO_PREFIX, ".xml")
 
     UpdateProgress2("Replacing ALTO")
     originalFilesCount = CountFilesInFolder(altoDestinationFolder)
