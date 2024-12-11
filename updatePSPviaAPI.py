@@ -1,19 +1,12 @@
 import subprocess
 import sys
 import importlib.metadata
-
-# Toto byl pokus doinstalovat moduly které chybí, ale nefunguje to
-#packages = {'Pillow', 'requests'}
-#[subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg]) 
-#for pkg in packages if not importlib.metadata.distribution(pkg)]
-
 from tkinter import *
 from tkinter import ttk
 from tkinter import filedialog
 from tkinter import font
 import os
 import zipfile
-#from PIL import Image
 import json
 import requests
 from datetime import datetime
@@ -22,7 +15,6 @@ from collections import defaultdict
 import subprocess
 import platform
 from tkinter import messagebox
-#from PIL import ImageTk as itk
 import shutil
 import hashlib
 import xml.etree.ElementTree as ET
@@ -32,6 +24,8 @@ import platform
 SETTINGS_FILE = "settings.json"
 JPG_FOLDER = "jpg"
 ALTO_FOLDER = "alto"
+MASTERCOPY_FOLDER = "mastercopy"
+TXT_FOLDER = "txt"
 MD5_PREFIX = "md5"
 INFO_PREFIX = "info"
 RESULT_FOLDER = "result"
@@ -308,7 +302,7 @@ def UnzipFile(zip_path, extract_to):
     return list(top_level_dirs)[0]
 
 def CheckPackage(package):
-    masterCopy = os.path.join(package, "mastercopy")
+    masterCopy = os.path.join(package, MASTERCOPY_FOLDER)
 
     global MD5_PREFIX
     checksumFile = FindFile(package, MD5_PREFIX, ".md5")
@@ -318,9 +312,9 @@ def CheckPackage(package):
 
     infoFile = FindFile(package, INFO_PREFIX, ".xml")
 
-    print(masterCopy)
-    print(checksumFile)
-    print(infoFile)
+    #print(masterCopy)
+    #print(checksumFile)
+    #print(infoFile)
 
     return os.path.exists(masterCopy) and checksumFile is not None and infoFile is not None
     
@@ -338,16 +332,8 @@ def ConvertToJpg(input_dir, output_dir):
             UpdateProgress('Converting to JPG ' + str(idx+1) + '/' + str(total) + "...")
             
             img = cv2.imread(jp2_path)       
-            # Save the image as jpg
-            cv2.imwrite(jpg_path, img, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+            cv2.imwrite(jpg_path, img, [int(cv2.IMWRITE_JPEG_QUALITY), 95])  # Save the image as jpg
             
-            #with Image(filename=jp2_path) as img:
-            #    img.format = 'jpeg'
-            #    img.compression_quality = 95
-            #    img.save(filename=jpg_path)
-            
-            #img = Image.open(jp2_path)
-            #img.convert('RGB').save(jpg_path, 'JPEG', quality=95)
             if (CheckLimit(jpg_path)):
                 print(jpg_path)
 
@@ -422,23 +408,19 @@ def SaveRequest(pspFolder, package, workingFolder, requestId, numberOfImages, da
 def CalculateWC(folder, extension, output):
     numberOfFiles = 0
     with open(output, 'w', newline='') as csvfile:
-        # Set up CSV writer
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(['File Name', 'Average WC'])
         
-        # Iterate through all XML files in the folder
-        for file_name in os.listdir(folder):
+        for file_name in os.listdir(folder):            # Iterate through all XML files in the folder
             if file_name.endswith(extension):
                 file_path = os.path.join(folder, file_name)
                 avg_wc = CalculateAverageWC(file_path)
 
                 if avg_wc is not None:
-                    # Write the result to the CSV file
-                    csvwriter.writerow([file_name, f"{avg_wc:.6f}"])
+                    csvwriter.writerow([file_name, f"{avg_wc:.6f}"])    # Write the result to the CSV file
                     numberOfFiles = numberOfFiles + 1
                 else:
-                    # Handle case where no WC values were found
-                    csvwriter.writerow([file_name, '0'])
+                    csvwriter.writerow([file_name, '0'])        # Handle case where no WC values were found
     return numberOfFiles
 
 def ExtractNamespace(root):
@@ -447,7 +429,6 @@ def ExtractNamespace(root):
     return None
 
 def CalculateAverageWC(file):
-    # Parse the XML file
     tree = ET.parse(file)
     root = tree.getroot()
 
@@ -481,24 +462,14 @@ def Run(serverUrl, apiKey, engine, pspFolder, workingFolder):
         resultFolder = pspFolder
 
     package = os.path.join(workingFolder, resultFolder)
-
     global ALTO_FOLDER
     altoFolder = os.path.join(package, ALTO_FOLDER)
-    print(altoFolder)
-    #if not os.path.exists(altoFolder):
-    #    altoFolder = os.path.join(package, ALTO_FOLDER.upper())
-    #    print(altoFolder)
-    #    if os.path.exists(altoFolder):
-    #        ALTO_FOLDER = ALTO_FOLDER.upper()
-    #    else:
-    #        ShowError('There is no alto folder in selected PSP package')
-    #        return
-    
+    #print(altoFolder)
     CalculateWC(altoFolder, ".xml", os.path.join(workingFolder, QUALITY_FILE))
 
     if CheckPackage(package):
         jpgFolder = os.path.join(workingFolder, JPG_FOLDER)
-        ConvertToJpg(os.path.join(package, "mastercopy"), jpgFolder)
+        ConvertToJpg(os.path.join(package, MASTERCOPY_FOLDER), jpgFolder)
         fileList = os.path.join(jpgFolder, "list.txt")
         CreateFilesList(jpgFolder, fileList)
         UpdateProgress("Sending request to PERO...")
@@ -620,9 +591,6 @@ def LoadData(tree):
         rows = other + replaced
 
         InsertRows(rows)
-        #if len(other) > 0:
-        #    tree.insert('', 'end', values=('---', '---'), tags=('spacer',))
-        #InsertRows(replaced)
         
     SetDisplay(tree)
 
@@ -677,8 +645,7 @@ def DeleteData(id, workingFolder, pspFolder, package):
 
 def DeleteFolder(folder):
     if os.path.exists(folder):
-        # Remove the folder and all its contents
-        shutil.rmtree(folder)
+        shutil.rmtree(folder)       # Remove the folder and all its contents
         
 def DeleteFile(file):
     if os.path.exists(file):
@@ -734,29 +701,23 @@ def RetrieveResult(serverUrl, apiKey, requestId, workingFolder):
     LoadData(tree)
 
 def ProcessResult(folder):
-    # Create subfolders if they don't exist
-    txtFolder = os.path.join(folder, "txt")
+    txtFolder = os.path.join(folder, TXT_FOLDER)
     altoFolder = os.path.join(folder, ALTO_FOLDER)
     os.makedirs(txtFolder, exist_ok=True)
     os.makedirs(altoFolder, exist_ok=True)
 
-    # Iterate through all files in the folder
-    for filename in os.listdir(folder):
-        # Get the full path to the file
+    for filename in os.listdir(folder):         # Iterate through all files in the folder
         file_path = os.path.join(folder, filename)
         
         if os.path.isfile(file_path):
-            # Remove ".jpg" from filename if present
-            new_name = filename.replace('.jpg', '')
+            new_name = filename.replace('.jpg', '')     # Remove ".jpg" from filename if present
             
             if filename.endswith('.txt'):
-                # Move .txt files to the "txt" subfolder
                 new_path = os.path.join(txtFolder, new_name)
-                shutil.move(file_path, new_path)
+                shutil.move(file_path, new_path)        # Move .txt files to the "txt" subfolder
 
             elif filename.endswith('.alto'):
-                # Change extension from .xml to .alto and move to the "alto" subfolder
-                new_name = new_name.replace('.alto', '.xml')
+                new_name = new_name.replace('.alto', '.xml')        # Change extension from .xml to .alto and move to the "alto" subfolder
                 new_path = os.path.join(altoFolder, new_name)
                 shutil.move(file_path, new_path)
 
@@ -767,7 +728,6 @@ def show_context_menu(event):
     selected_item = tree.identify_row(event.y)
     if selected_item:
         tree.selection_set(selected_item)
-        #print(tree.item(selected_item)['values'])
         if tree.item(selected_item)['values'][6] != "sent":
             context_menu.entryconfigure("Replace files", state=NORMAL)
             context_menu.entryconfigure("Compare quality", state=NORMAL)
@@ -886,21 +846,16 @@ def GenerateMD5File(folderPath, outputPath, excludedFiles):
 
 def ReplaceChecksum(file, value):
     try:
-        # Parse the XML file
         tree = ET.parse(file)
         root = tree.getroot()
 
-        # Find the element with the name "checksum"
-        checksumElement = root.find(".//checksum")
+        checksumElement = root.find(".//checksum")      # Find the element with the name "checksum"
 
         if checksumElement is not None:
-            # Update the "checksum" attribute with the new value
-            checksumElement.set("checksum", value)
-            #print(f"Updated 'checksum' attribute to: {value}")
-            # Save the modified XML back to the file
-            tree.write(file)
+            checksumElement.set("checksum", value)      # Update the "checksum" attribute with the new value
+            tree.write(file)                            # Save the modified XML back to the file
         else:
-            print("Error: 'checksum' element not found in the XML file.")
+            ShowError2("'checksum' element not found in the XML file.")
 
     except ET.ParseError as e:
         print(f"Error parsing XML: {e}")
@@ -924,8 +879,8 @@ def ReadWCFromCsv(csvFile):
     with open(csvFile, mode='r', newline='') as file:
         reader = csv.DictReader(file)
         for row in reader:
-            wc_value = float(row['Average WC'])   # Assuming the column name is 'WC'
-            wc_data.append(wc_value)      # Store WC value by row index
+            wc_value = float(row['Average WC'])
+            wc_data.append(wc_value)                # Store WC value by row index
     return wc_data
 
 def ReadFilenames(csvFile):
@@ -933,25 +888,20 @@ def ReadFilenames(csvFile):
     with open(csvFile, mode='r', newline='') as file:
         reader = csv.DictReader(file)
         for row in reader:
-            file_names.append(row['File Name'])  # Assuming the column name is 'File Name'
+            file_names.append(row['File Name'])
     return file_names
 
 def CompareQuality(originalFolder, resultFolder):
     originalQuality = os.path.join(originalFolder, QUALITY_FILE)
     resultQuality = os.path.join(resultFolder, QUALITY_FILE)
     
-    # Read both CSV files into dictionaries
     wc_data_file1 = ReadWCFromCsv(originalQuality)
     wc_data_file2 = ReadWCFromCsv(resultQuality)
 
     file_names = ReadFilenames(originalQuality)  # Use the file names from the first file (in order)
 
-    # List to store the results where WC in the second file is lower than in the first
     results = []
-
-    # Compare WC values for matching file names
     for index, (wc1, wc2) in enumerate(zip(wc_data_file1, wc_data_file2)):
-    #if wc2 < wc1:
         results.append([file_names[index], wc1, wc2])
 
     return results
@@ -962,65 +912,51 @@ def ShowQualityComparison(originalFolder, resultFolder):
     ShowTable(results, originalFolder)
 
 def ShowTable(data, workingFolder):
-    # Create a new window for the table
-    table_window = Toplevel()
+    table_window = Toplevel()               # Create a new window for the table
     table_window.title("Result comparison")
-    table_window.geometry("800x600")  # Set window size
+    table_window.geometry("800x600")
 
     show_button = ttk.Button(table_window, text="Open in .csv", command=lambda: OpenCsv(os.path.join(workingFolder, QUALITYCOMPARISON_FILE)))
     show_button.pack(pady=10)
 
-    # Set up a monospace font for alignment
-    monospace_font = font.Font(family="Courier", size=10)
+    monospace_font = font.Font(family="Courier", size=10)       # Set up a monospace font for alignment
 
-    # Create a Frame to hold the Text widget and Scrollbar
-    frame = Frame(table_window)
+    frame = Frame(table_window)             # Create a Frame to hold the Text widget and Scrollbar
     frame.pack(expand=True, fill="both")
 
-    # Add a Text widget to display the table
-    text_widget = Text(frame, wrap="none", font=monospace_font)
+    text_widget = Text(frame, wrap="none", font=monospace_font)     # Add a Text widget to display the table
     text_widget.pack(side="left", expand=True, fill="both")
 
-    # Add a vertical scrollbar
-    scrollbar = Scrollbar(frame, orient="vertical", command=text_widget.yview)
+    scrollbar = Scrollbar(frame, orient="vertical", command=text_widget.yview)      # Add a vertical scrollbar
     scrollbar.pack(side="right", fill="y")
 
-    # Link the Text widget to the scrollbar
-    text_widget.configure(yscrollcommand=scrollbar.set)
+    text_widget.configure(yscrollcommand=scrollbar.set)         # Link the Text widget to the scrollbar
 
-    # Header row
     header = f"{'Page':<50} {'Original':>10} {'New':>10}\n"
     text_widget.insert("end", header)
     text_widget.insert("end", "=" * len(header) + "\n")
 
-    # Add data rows
-    for idx,row in enumerate(data):
+    for idx,row in enumerate(data):             # Add data rows
         title, value1, value2 = row
         row_text = f"{title:<50} {value1:>10.2f} {value2:>10.2f}\n"
         start_index = text_widget.index("end")  # Start index of the row text
         text_widget.insert("end", row_text)
 
-        # Highlight the larger value
         if value1 >= value2:
             bold_start = 57
         else:
             bold_start = 68
 
         rowNr = idx + 3
-        text_widget.tag_add("bold", str(rowNr) + "." + str(bold_start), str(rowNr) + "." + str(bold_start+4))
+        text_widget.tag_add("bold", str(rowNr) + "." + str(bold_start), str(rowNr) + "." + str(bold_start+4))       # Highlight the larger value
 
-    # Configure the bold tag
-    text_widget.tag_configure("bold", background="yellow")
-
-    # Disable editing of the Text widget
-    text_widget.config(state="disabled")
+    text_widget.tag_configure("bold", background="yellow")          # Configure the bold tag to mean yellow background
+    text_widget.config(state="disabled")                            # Disable editing of the Text widget
 
 def SaveQualityComparison(results, workingFolder):
     with open(os.path.join(workingFolder, QUALITYCOMPARISON_FILE), mode='w', newline='', encoding='utf-8') as file:
         writer = csv.writer(file)
-        # Write the header
         writer.writerow(['Title', 'Original', 'New'])
-        # Write the data rows
         writer.writerows(results)
 
 def OpenCsv(file_path):
@@ -1038,9 +974,9 @@ def ReplaceFiles(sourceFolder, destinationFolder, destinationPackage, workingFol
     CreateBackup(destinationPackage)
     
     altoSourceFolder = os.path.join(sourceFolder, ALTO_FOLDER)
-    txtSourceFolder = os.path.join(sourceFolder, "txt")
+    txtSourceFolder = os.path.join(sourceFolder, TXT_FOLDER)
     altoDestinationFolder = os.path.join(destinationFolder, ALTO_FOLDER)
-    txtDestinationFolder = os.path.join(destinationFolder, "txt")
+    txtDestinationFolder = os.path.join(destinationFolder, TXT_FOLDER)
     checksumFile = FindFile(destinationFolder, MD5_PREFIX, ".md5")
     infoFile = FindFile(destinationFolder, INFO_PREFIX, ".xml")
 
@@ -1049,7 +985,7 @@ def ReplaceFiles(sourceFolder, destinationFolder, destinationPackage, workingFol
     newFilesCount = CountFilesInFolder(altoSourceFolder)
     if originalFilesCount == newFilesCount:
         CopyFiles(altoSourceFolder, altoDestinationFolder)
-        print(f"ALTO updated")
+        #print(f"ALTO updated")
     else:
         ShowError2(f"ALTO not updated: Number of files does not match! Number of original files: {originalFilesCount}; number of new files: {newFilesCount}.")
         return
@@ -1059,21 +995,21 @@ def ReplaceFiles(sourceFolder, destinationFolder, destinationPackage, workingFol
     newFilesCount = CountFilesInFolder(txtSourceFolder)
     if originalFilesCount == newFilesCount:
         CopyFiles(txtSourceFolder, txtDestinationFolder) 
-        print(f"TXT updated")
+        #print(f"TXT updated")
     else:
         ShowError2(f"TXT not updated: Number of files does not match! Number of original files: {originalFilesCount}; number of new files: {newFilesCount}.")
         return
 
     UpdateProgress2("Replacing hash")
     GenerateMD5File(destinationFolder, checksumFile, [os.path.join("", checksumFile), os.path.join("", infoFile)])
-    print(f"md5 updated")
+    #print(f"md5 updated")
 
     ReplaceChecksum(infoFile, GenerateMD5(checksumFile))
-    print(f"checksum updated")
+    #print(f"checksum updated")
 
     if os.path.isfile(destinationPackage):
         UpdateProgress2("Zipping")
-        print(destinationPackage)
+        #print(destinationPackage)
         ZipFolder(destinationFolder, destinationPackage)
 
     if id != None:
@@ -1097,10 +1033,8 @@ def ZipFolder(folder, destination):
         for root, dirs, files in os.walk(folder):
             for file in files:
                 file_path = os.path.join(root, file)
-                # Create the relative path to store in the zip file (starting with the folder name)
-                relative_path = os.path.join(baseFolder, os.path.relpath(file_path, folder))
-                # Add the file to the zip archive with the correct folder structure
-                zipf.write(file_path, relative_path)
+                relative_path = os.path.join(baseFolder, os.path.relpath(file_path, folder))        # Create the relative path to store in the zip file (starting with the folder name)
+                zipf.write(file_path, relative_path)                                                # Add the file to the zip archive with the correct folder structure
 
 ###############################################################################
 # načtení nastavení a spuštění programu
