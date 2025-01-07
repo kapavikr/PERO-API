@@ -33,23 +33,22 @@ DATA_FILE = "data.csv"
 QUALITY_FILE = "quality.csv"
 QUALITYCOMPARISON_FILE = "qualityComparison.csv" 
 WINDOW_WIDTH = 1000
+NOT_SELECTED = "[Folder not selected]"
 
 ###############################################################################
 # Upravené kopie funkcí z post_ocr_request.py
 ###############################################################################
 def LoadEnginesFromAPI(server_url, api_key):
     r = requests.get(f"{server_url}/get_engines", headers={"api-key": api_key})
-    print(r.status_code)
+    #print(r.status_code)
     if r.status_code != 200:
         ShowError(f'ERROR: Failed to get available OCR engine list. Code: {r.status_code}')
-        print(f'ERROR: Failed to get available OCR engine list. Code: {r.status_code}')
         return None
 
     try:
         result = r.json()
         if result['status'] not in ["success", "succes"]:
             ShowError(f'ERROR: Failed to get available OCR engine list. Status: {result["status"]}')
-            print(f'ERROR: Failed to get available OCR engine list. Status: {result["status"]}')
             return None
     except:
         print(f'ERROR: Communication with API failed.')
@@ -78,22 +77,18 @@ def PostRequest(server_url, api_key, request_dict):
 
     if r.status_code == 404:
         ShowError(f'ERROR: Requested engine was not found on server.')
-        print(f'ERROR: Requested engine was not found on server.')
         return None
     elif r.status_code == 422:
         ShowError(f'ERROR: Request JSON has wrong format.')
-        print(f'ERROR: Request JSON has wrong format.')
         return None
     elif r.status_code != 200:
         ShowError(f'ERROR: Request returned with unexpected status code: {r.status_code}')
-        print(f'ERROR: Request returned with unexpected status code: {r.status_code}')
         return None
 
     else:
         response = r.json()
         if response['status'] != "success":
             ShowError(f'ERROR: Request status is wrong: {response["status"]}')
-            print(f'ERROR: Request status is wrong: {response["status"]}')
             print(response)
 
         return response['request_id']
@@ -116,33 +111,27 @@ def UploadImages(server_url, api_key, request_dict, request_id, image_path):
 
         with open(file_path, 'rb') as f:
             r = session.post(url, files={'file': f}, headers=headers)
-        print(r.text)
+        #print(r.text)
         if r.status_code == 200:
             uploaded = uploaded + 1
             continue
         if r.status_code == 202:
             ShowError(f'ERROR: Page in wrong state.')
-            print(f'ERROR: Page in wrong state.')
             continue
         if r.status_code == 400:
             ShowError(f'ERROR: Request with id {request_id} does not exist.')
-            print(f'ERROR: Request with id {request_id} does not exist.')
             continue
         if r.status_code == 401:
             ShowError(f'ERROR: Request with id {request_id} does not belong to this API key.')
-            print(f'ERROR: Request with id {request_id} does not belong to this API key.')
             continue
         if r.status_code == 404:
             ShowError(f'ERROR: Page with name {image_name} does not exist in request {request_id}.')
-            print(f'ERROR: Page with name {image_name} does not exist in request {request_id}.')
             continue
         if r.status_code == 422:
             ShowError(f'ERROR: Unsupported image file extension {image_name}.')
-            print(f'ERROR: Unsupported image file extension {image_name}.')
             continue
         if r.status_code != 200:
             ShowError(f'ERROR: Request returned with unexpected status code: {r.status_code}')
-            print(f'ERROR: Request returned with unexpected status code: {r.status_code}')
             print(r.text)
             continue
 
@@ -217,23 +206,32 @@ def download_results(page_name, session, server_url, api_key, request_id, output
 ###############################################################################
 # GUI
 ###############################################################################
-root = Tk()
-root.geometry(str(WINDOW_WIDTH) + "x600")
+def GUI0():
+    global root
+    global tabControl
+    global tab1
+    global tab2
+    global tab3
 
-root.grid_columnconfigure(0, minsize=400)
-root.grid_columnconfigure(1, minsize=400)
+    root = Tk()
+    root.geometry(str(WINDOW_WIDTH) + "x600")
 
-root.title("updatePSPviaAPI") 
-tabControl = ttk.Notebook(root) 
-  
-tab1 = ttk.Frame(tabControl) 
-tab2 = ttk.Frame(tabControl)
-tab3 = ttk.Frame(tabControl)
-  
-tabControl.add(tab1, text ='Zadání') 
-tabControl.add(tab2, text ='Výsledky')
-tabControl.add(tab3, text ='Manuální nahrazení') 
-tabControl.pack(expand = 1, fill ="both")
+    root.grid_columnconfigure(0, minsize=400)
+    root.grid_columnconfigure(1, minsize=400)
+
+    root.title("updatePSPviaAPI") 
+    tabControl = ttk.Notebook(root) 
+      
+    tab1 = ttk.Frame(tabControl) 
+    tab2 = ttk.Frame(tabControl)
+    tab3 = ttk.Frame(tabControl)
+      
+    tabControl.add(tab1, text ='Zadání') 
+    tabControl.add(tab2, text ='Výsledky')
+    #tabControl.add(tab3, text ='Manuální nahrazení') 
+    tabControl.pack(expand = 1, fill ="both")
+
+#GUI0()
 
 ###############################################################################
 # tab 1 - Zadání
@@ -245,12 +243,15 @@ def ShowSuccess(text):
     UpdateProgress(text, 'green')
     
 def UpdateProgress(text, color = None):
-    progress.set(text)
-    if color != None:
-        progressLabel.config(foreground=color)
+    if 'progress' in globals(): 
+        progress.set(text)
+        if color != None:
+            progressLabel.config(foreground=color)
+        else:
+            progressLabel.config(foreground='black')
+        root.update()
     else:
-        progressLabel.config(foreground='black')
-    root.update()
+        print(text)
 
 def CreateTextboxRow(frame, rowIndex, label):
     label = ttk.Label(frame, text = label)
@@ -360,10 +361,16 @@ def SaveSettings(serverUrl, apiKey):
     with open(SETTINGS_FILE, "w") as outfile:
         outfile.write(json_object)
 
-def LoadSettings():
+def LoadSettingsFromFile():
     if os.path.exists(SETTINGS_FILE):
         with open(SETTINGS_FILE, 'r') as openfile:
             settings = json.load(openfile)
+            return settings
+    return None
+
+def LoadSettings():
+    settings = LoadSettingsFromFile()
+    if settings != None:
         serverUrlTextbox.delete("1.0", END)
         serverUrlTextbox.insert(END, settings['ServerURL'])
         apiKeyTextbox.delete("1.0", END)
@@ -455,6 +462,10 @@ def Run(serverUrl, apiKey, engine, pspFolder, workingFolder):
         ShowError('Není vybrán PSP balíček a pracovní složka!')
         return
 
+    if not os.path.exists(pspFolder):
+        print('Zadána neexistující cesta: ' + pspFolder)
+        return
+
     if os.path.isfile(pspFolder) and zipfile.is_zipfile(pspFolder):
         UpdateProgress("Unzipping...")
         resultFolder = UnzipFile(pspFolder, workingFolder)
@@ -476,35 +487,49 @@ def Run(serverUrl, apiKey, engine, pspFolder, workingFolder):
         [requestId, numberOfImages]= SendRequest(serverUrl, apiKey, engine, fileList, jpgFolder)
         if requestId != None:
             SaveRequest(pspFolder, package, workingFolder, requestId, numberOfImages, datetime.now())
-            LoadData(tree)
+            if 'tree' in globals():
+                LoadData(tree)
             ShowSuccess('Request sent!')
     else:
         ShowError('Input is not a valid PSP package!')
 
-NOT_SELECTED = "[Folder not selected]"
-pspFolder = StringVar()
-workingFolder = StringVar()
-engine = StringVar()
-progress = StringVar()
-pspFolder.set(NOT_SELECTED)  
-workingFolder.set(NOT_SELECTED)
-engine.set(1)
-progress.set('')
-selectFileType = StringVar()
-selectFileType.set("zip")
-        
-row = 1
-serverUrlTextbox = CreateTextboxRow(tab1, row, "Server URL")
-row += 1
-apiKeyTextbox = CreateTextboxRow(tab1, row, "API key")
-row += 1
+def GUI1():
+    global pspFolder
+    global workingFolder
+    global engine
+    global progress
+    global selectFileType
+    global row
+    global serverUrlTextbox
+    global apiKeyTextbox
+    global loadEnginesButton
+    global progressLabel
+    
+    pspFolder = StringVar()
+    workingFolder = StringVar()
+    engine = StringVar()
+    progress = StringVar()
+    pspFolder.set(NOT_SELECTED)  
+    workingFolder.set(NOT_SELECTED)
+    engine.set(1)
+    progress.set('')
+    selectFileType = StringVar()
+    selectFileType.set("zip")
+            
+    row = 1
+    serverUrlTextbox = CreateTextboxRow(tab1, row, "Server URL")
+    row += 1
+    apiKeyTextbox = CreateTextboxRow(tab1, row, "API key")
+    row += 1
 
-loadEnginesButton = ttk.Button(tab1, width=15, text = "LoadEngines", command=lambda: LoadEngines(serverUrlTextbox.get("1.0", END).strip(), apiKeyTextbox.get("1.0", END).strip(), loadEnginesButton))
-loadEnginesButton.grid(row = row, column = 0, columnspan = 2, padx = 10, pady = 10)
-row += 1
+    loadEnginesButton = ttk.Button(tab1, width=15, text = "LoadEngines", command=lambda: LoadEngines(serverUrlTextbox.get("1.0", END).strip(), apiKeyTextbox.get("1.0", END).strip(), loadEnginesButton))
+    loadEnginesButton.grid(row = row, column = 0, columnspan = 2, padx = 10, pady = 10)
+    row += 1
 
-progressLabel = ttk.Label(tab1, textvariable = progress)
-progressLabel.grid(row = row, column = 0, columnspan = 2, padx = 10, pady = 10)
+    progressLabel = ttk.Label(tab1, textvariable = progress)
+    progressLabel.grid(row = row, column = 0, columnspan = 2, padx = 10, pady = 10)
+
+#GUI1()
 
 def ShowFullGUI(enginesSelection):
     global row
@@ -528,6 +553,7 @@ def ShowFullGUI(enginesSelection):
     button.pack()
     button = ttk.Button(selectionFrame, width=15, text = "PSP folder", command=OpenPSPFolder2)
     button.pack()
+
     label = ttk.Label(tab1, textvariable = pspFolder)
     label.grid(row = row, column = 1, sticky = W, padx = 10, pady = 10)
 
@@ -553,12 +579,15 @@ def ShowSuccess2(text):
     UpdateProgress2(text, 'green')
     
 def UpdateProgress2(text, color = None):
-    progress2.set(text)
-    if color != None:
-        progressLabel2.config(foreground=color)
+    if 'progress' in globals():
+        progress2.set(text)
+        if color != None:
+            progressLabel2.config(foreground=color)
+        else:
+            progressLabel2.config(foreground='black')
+        root.update()
     else:
-        progressLabel2.config(foreground='black')
-    root.update()
+        print(text)
 
 def LoadData(tree):    
     for row in tree.get_children():
@@ -765,49 +794,56 @@ def on_tree_click(event):
         item_values = tree.item(selected_item, 'values')
         ShowDetails(item_values)
 
-progress2 = StringVar()
-progress2.set('')
+def GUI2():
+    global progress2
+    global progressLabel2
+    global tree
+    
+    progress2 = StringVar()
+    progress2.set('')
 
-table_frame = ttk.Frame(tab2)
-table_frame.pack(expand=True, fill='both')
+    table_frame = ttk.Frame(tab2)
+    table_frame.pack(expand=True, fill='both')
 
-progressLabel2 = ttk.Label(table_frame, textvariable = progress2)
-progressLabel2.pack(side=TOP, pady=10)
+    progressLabel2 = ttk.Label(table_frame, textvariable = progress2)
+    progressLabel2.pack(side=TOP, pady=10)
 
-columns = ('#1', '#2', '#3', '#4', '#5', '#6', '#7')
-tree = ttk.Treeview(table_frame, columns=columns, show='headings')
-tree.tag_configure('oddrow', background="lightgrey")
-tree.tag_configure('evenrow', background="white")
-tree.tag_configure('spacer', background='white')
-style = ttk.Style()
-style.configure("Treeview", rowheight=30)
+    columns = ('#1', '#2', '#3', '#4', '#5', '#6', '#7')
+    tree = ttk.Treeview(table_frame, columns=columns, show='headings')
+    tree.tag_configure('oddrow', background="lightgrey")
+    tree.tag_configure('evenrow', background="white")
+    tree.tag_configure('spacer', background='white')
+    style = ttk.Style()
+    style.configure("Treeview", rowheight=30)
 
-# Create a vertical scrollbar for the Treeview
-scrollbar = ttk.Scrollbar(table_frame, orient=VERTICAL, command=tree.yview)
-tree.configure(yscroll=scrollbar.set)
+    # Create a vertical scrollbar for the Treeview
+    scrollbar = ttk.Scrollbar(table_frame, orient=VERTICAL, command=tree.yview)
+    tree.configure(yscroll=scrollbar.set)
 
-# Load CSV content into the treeview
-LoadData(tree)
+    # Load CSV content into the treeview
+    LoadData(tree)
 
-# Pack the Treeview and scrollbar
-tree.pack(side=LEFT, expand=True, fill='both')
-scrollbar.pack(side=RIGHT, fill='y')
+    # Pack the Treeview and scrollbar
+    tree.pack(side=LEFT, expand=True, fill='both')
+    scrollbar.pack(side=RIGHT, fill='y')
 
-# Create the context menu
-global context_menu
-context_menu = Menu(tab2, tearoff=0)
-context_menu.add_command(label="Retrieve result", command=lambda: on_context_menu_click("Retrieve"))
-context_menu.add_command(label="Compare quality", command=lambda: on_context_menu_click("Compare"))
-context_menu.add_command(label="Replace files", command=lambda: on_context_menu_click("Replace"))
-context_menu.add_separator()
-context_menu.add_command(label="Open folder", command=lambda: on_context_menu_click("Open"))
-context_menu.add_command(label="Details", command=lambda: on_context_menu_click("Details"))
-context_menu.add_separator()
-context_menu.add_command(label="Delete", command=lambda: on_context_menu_click("Delete"))
+    # Create the context menu
+    global context_menu
+    context_menu = Menu(tab2, tearoff=0)
+    context_menu.add_command(label="Retrieve result", command=lambda: on_context_menu_click("Retrieve"))
+    context_menu.add_command(label="Compare quality", command=lambda: on_context_menu_click("Compare"))
+    context_menu.add_command(label="Replace files", command=lambda: on_context_menu_click("Replace"))
+    context_menu.add_separator()
+    context_menu.add_command(label="Open folder", command=lambda: on_context_menu_click("Open"))
+    #context_menu.add_command(label="Details", command=lambda: on_context_menu_click("Details"))
+    context_menu.add_separator()
+    context_menu.add_command(label="Delete", command=lambda: on_context_menu_click("Delete"))
 
-# Bind right-click event to the treeview
-tree.bind("<Button-3>", show_context_menu)
-tree.bind("<Double-1>", on_tree_click)
+    # Bind right-click event to the treeview
+    tree.bind("<Button-3>", show_context_menu)
+    tree.bind("<Double-1>", on_tree_click)
+
+#GUI2()
 
 
 ###############################################################################
@@ -1039,7 +1075,31 @@ def ZipFolder(folder, destination):
 ###############################################################################
 # načtení nastavení a spuštění programu
 ###############################################################################
-LoadSettings()
-LoadEngines(serverUrlTextbox.get("1.0", END).strip(), apiKeyTextbox.get("1.0", END).strip(), loadEnginesButton)
+def GetArgument(index):
+    if len(sys.argv) > index:
+        return sys.argv[index]
+    else:
+        return None
 
-root.mainloop()
+def RunWithoutGUI(settings):
+    pspFolder = GetArgument(1)
+    engine = GetArgument(2)
+    if engine == None:
+        engine = "1"
+
+    workingFolder = GetArgument(3)
+    if workingFolder == None:
+        workingFolder = os.path.dirname(pspFolder)
+
+    Run(settings['ServerURL'], settings['APIKey'], engine, pspFolder, workingFolder)
+
+settings = LoadSettingsFromFile()
+if GetArgument(1) != None and settings != None:
+    RunWithoutGUI(settings)
+else:
+    GUI0()
+    GUI1()
+    GUI2()
+    LoadSettings()
+    LoadEngines(serverUrlTextbox.get("1.0", END).strip(), apiKeyTextbox.get("1.0", END).strip(), loadEnginesButton)
+    root.mainloop()
