@@ -691,7 +691,8 @@ def DeleteRequest(id):
     with open(DATA_FILE, mode='w', newline='', encoding='utf-8') as outfile:
         writer = csv.writer(outfile)
         writer.writerows(updated_rows)
-    LoadData(tree)
+    if 'tree' in globals():
+        LoadData(tree)
 
 def RetrieveResult(serverUrl, apiKey, requestId, workingFolder):
     SaveSettings(serverUrl, apiKey)
@@ -721,13 +722,15 @@ def RetrieveResult(serverUrl, apiKey, requestId, workingFolder):
         print('ALL PAGES DONE')
         numberOfFiles = CalculateWC(resultFolder, ".alto", os.path.join(resultFolder, QUALITY_FILE))
         comparison = CompareQuality(workingFolder, resultFolder)
-        UpdateResult(requestId, str(round((numberOfFiles - len(comparison))/numberOfFiles*100) if numberOfFiles > 0 else 0) + " %")
+        celkem = sum(1 for page, old, new in comparison if new >= old)
+        UpdateResult(requestId, str(round(celkem/numberOfFiles*100) if numberOfFiles > 0 else 0) + " %")
         UpdateStatus(requestId, "processed")
         ProcessResult(resultFolder)
         ShowSuccess2("Results retrieved")
     else:
         ShowError2("All files are not yet processed, please try again later")
-    LoadData(tree)
+    if 'tree' in globals():
+        LoadData(tree)
 
 def ProcessResult(folder):
     txtFolder = os.path.join(folder, TXT_FOLDER)
@@ -792,7 +795,11 @@ def on_tree_click(event):
     if selected_item:
         tree.selection_set(selected_item)
         item_values = tree.item(selected_item, 'values')
-        ShowDetails(item_values)
+        if item_values[6] != "sent":
+            ShowQualityComparison(item_values[2], os.path.join(item_values[2], RESULT_FOLDER))
+        else:
+            RetrieveResult(serverUrlTextbox.get("1.0", END).strip(), apiKeyTextbox.get("1.0", END).strip(), item_values[3], item_values[2])
+        #ShowDetails(item_values)
 
 def GUI2():
     global progress2
@@ -1081,8 +1088,26 @@ def GetArgument(index):
     else:
         return None
 
-def RunWithoutGUI(settings):
-    pspFolder = GetArgument(1)
+def GetDatas(requestId):
+    result = []
+    with open(DATA_FILE, newline='') as file:
+        reader = csv.reader(file)
+        headers = next(reader)
+        for row in reader:
+            if (requestId == None or row[3] == requestId):
+                result.append((row[3], row[2], row[0], row[1]))
+    return result
+
+def RunWithParameters(settings):
+    argument1 = GetArgument(1)
+    if argument1 != "retrieve" and argument1 != "delete":
+        RunWithoutGUI(settings, argument1)
+    elif argument1 == "retrieve":
+        RetrieveWithoutGUI(settings)
+    elif argument1 == "delete":
+        DeleteWithoutGUI(settings)
+      
+def RunWithoutGUI(settings, pspFolder):
     engine = GetArgument(2)
     if engine == None:
         engine = "1"
@@ -1091,11 +1116,35 @@ def RunWithoutGUI(settings):
     if workingFolder == None:
         workingFolder = os.path.dirname(pspFolder)
 
-    Run(settings['ServerURL'], settings['APIKey'], engine, pspFolder, workingFolder)
+    Run(settings['ServerURL'], settings['APIKey'], engine, pspFolder, workingFolder) 
+    
+def RetrieveWithoutGUI(settings):
+    requestId = GetArgument(2)
+    requests = []
+    
+    if requestId != None:
+        requests = GetDatas(requestId)
+    else:
+        requests = GetDatas(None)
+    
+    for request in requests:
+        RetrieveResult(settings['ServerURL'], settings['APIKey'], request[0], request[1])
+
+def DeleteWithoutGUI(settings):
+    requestId = GetArgument(2)
+    requests = []
+    
+    if requestId != None:
+        requests = GetDatas(requestId)
+    else:
+        requests = GetDatas(None)
+    
+    for request in requests:
+        DeleteData(request[0], request[1], request[2], request[3])
 
 settings = LoadSettingsFromFile()
 if GetArgument(1) != None and settings != None:
-    RunWithoutGUI(settings)
+    RunWithParameters(settings)
 else:
     GUI0()
     GUI1()
